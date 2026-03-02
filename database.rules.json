@@ -1,0 +1,154 @@
+{
+  "rules": {
+    ".read": false,
+    ".write": false,
+
+    "usuarios": {
+      ".read": "auth != null",
+      "$uid": {
+        ".write": "auth != null && ($uid === auth.uid || root.child('usuarios').child(auth.uid).child('rol').val() === 'admin')",
+        "rol": {
+          ".validate": "(!data.exists() && $uid === auth.uid && newData.val() === 'cliente') || ($uid === auth.uid && data.exists() && newData.val() === data.val()) || (root.child('usuarios').child(auth.uid).child('rol').val() === 'admin' && (newData.val() === 'admin' || newData.val() === 'personal' || newData.val() === 'cliente'))"
+        },
+        "sucursalId": {
+          ".validate": "($uid === auth.uid && data.exists() && newData.val() === data.val()) || (root.child('usuarios').child(auth.uid).child('rol').val() === 'admin')"
+        },
+        "sucursalNombre": {
+          ".validate": "($uid === auth.uid && data.exists() && newData.val() === data.val()) || (root.child('usuarios').child(auth.uid).child('rol').val() === 'admin')"
+        }
+      }
+    },
+
+    "productos": {
+      ".read": "auth != null",
+      ".write": "auth != null && (root.child('usuarios').child(auth.uid).child('rol').val() === 'admin')",
+      ".indexOn": ["marcaLower", "modeloLower", "nombreLower"]
+    },
+
+    "productosPorMarca": {
+      ".read": "auth != null",
+      ".write": "auth != null && (root.child('usuarios').child(auth.uid).child('rol').val() === 'admin')"
+    },
+
+    "sucursales": {
+      ".read": "auth != null",
+      ".write": "auth != null && (root.child('usuarios').child(auth.uid).child('rol').val() === 'admin')"
+    },
+
+    "inventario": {
+      ".read": "auth != null",
+      ".write": "auth != null",
+      "$sucursalId": {
+        "$productoId": {
+          "tallas": {
+            "$talla": {
+              ".validate": "newData.isNumber() && newData.val() >= 0"
+            }
+          },
+          "actualizadoEn": { ".validate": "newData.isNumber()" }
+        }
+      }
+    },
+
+    "inventarioTotales": {
+      ".read": "auth != null",
+      ".write": "auth != null",
+      "$sucursalId": {
+        "$productoId": {
+          "total": { ".validate": "newData.isNumber() && newData.val() >= 0" },
+          "actualizadoEn": { ".validate": "newData.isNumber()" }
+        }
+      }
+    },
+
+    "transferencias": {
+      ".read": "auth != null",
+      ".write": false,
+      ".indexOn": ["desdeSucursalId", "haciaSucursalId", "estado", "creadoEn", "transferidoEn"],
+      "$transferenciaId": {
+        ".write": "auth != null && (root.child('usuarios').child(auth.uid).child('rol').val() === 'admin' || root.child('usuarios').child(auth.uid).child('rol').val() === 'personal') && ( (!data.exists() && newData.child('estado').val() === 'pendiente' && newData.child('creadoPorUsuarioId').val() === auth.uid && newData.child('creadoEn').isNumber() && (root.child('usuarios').child(auth.uid).child('rol').val() === 'admin' || root.child('usuarios').child(auth.uid).child('sucursalId').val() === newData.child('haciaSucursalId').val()) ) || (data.exists() && data.child('estado').val() === 'pendiente' && newData.child('estado').val() === 'transferido' && newData.child('transferidoPorUsuarioId').val() === auth.uid && newData.child('transferidoEn').isNumber() && (root.child('usuarios').child(auth.uid).child('rol').val() === 'admin' || root.child('usuarios').child(auth.uid).child('sucursalId').val() === data.child('desdeSucursalId').val()) ) )",
+        "desdeSucursalId": { ".validate": "newData.isString()" },
+        "haciaSucursalId": { ".validate": "newData.isString()" },
+        "estado": {
+          ".validate": "newData.val() === 'pendiente' || newData.val() === 'transferido'"
+        },
+        "creadoPorUsuarioId": { ".validate": "newData.val() === null || newData.isString()" },
+        "creadoEn": { ".validate": "newData.isNumber()" },
+        "transferidoPorUsuarioId": { ".validate": "newData.val() === null || newData.isString()" },
+        "transferidoEn": { ".validate": "newData.val() === null || newData.isNumber()" },
+        "nota": { ".validate": "newData.val() === null || newData.isString()" },
+        "items": {
+          ".validate": "newData.isObject()",
+          "$productoId": {
+            "tallas": {
+              ".validate": "newData.isObject()",
+              "$talla": { ".validate": "newData.isNumber() && newData.val() > 0" }
+            }
+          }
+        }
+      }
+    },
+
+    "ventas": {
+      ".read": "auth != null",
+      ".write": "auth != null",
+      "$ventaId": {
+        "estado": {
+          ".validate": "newData.val() === 'pendiente' || newData.val() === 'confirmada' || newData.val() === 'anulada'"
+        },
+        "creadoEn": { ".validate": "newData.isNumber()" },
+        "confirmadoEn": { ".validate": "newData.val() === null || newData.isNumber()" }
+      }
+    },
+
+    "movimientosInventario": {
+      ".read": "auth != null",
+      ".write": "auth != null",
+      "$movimientoId": {
+        "creadoEn": { ".validate": "newData.isNumber()" }
+      }
+    },
+
+    "ventasPorSucursal": {
+      ".read": "auth != null",
+      ".write": "auth != null",
+      "$sucursalId": {
+        ".indexOn": ["creadoEn"]
+      }
+    },
+
+    "idempotencias": {
+      ".read": "auth != null",
+      ".write": "auth != null",
+      "$key": {
+        "tipo": { ".validate": "newData.isString()" },
+        "entityId": { ".validate": "newData.isString()" },
+        "usuarioId": { ".validate": "newData.val() === null || newData.isString()" },
+        "estado": { ".validate": "newData.val() === 'processing' || newData.val() === 'confirmada' || newData.val() === 'fallida'" },
+        "etapa": { ".validate": "newData.isString()" },
+        "creadoEn": { ".validate": "newData.isNumber()" },
+        "actualizadoEn": { ".validate": "newData.isNumber()" },
+        "confirmadoEn": { ".validate": "newData.val() === null || newData.isNumber()" },
+        "error": { ".validate": "newData.val() === null || newData.isString()" }
+      }
+    },
+
+    "reportes": {
+      ".read": "auth != null",
+      ".write": "auth != null",
+      "ventasPorSucursalDia": {
+        "$sucursalId": {
+          "$yyyymmdd": {
+            "total": { ".validate": "newData.isNumber() && newData.val() >= 0" },
+            "cantidadVentas": { ".validate": "newData.isNumber() && newData.val() >= 0" },
+            "actualizadoEn": { ".validate": "newData.isNumber()" }
+            ,
+            "ventas": {
+              "$ventaId": { ".validate": "newData.val() === true" }
+            }
+          }
+        }
+      }
+    }
+  }
+}

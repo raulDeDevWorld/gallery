@@ -1,26 +1,234 @@
+@config "../../tailwind.config.js";
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  /* Theme tokens (space-separated RGB for Tailwind alpha support) */
+  --bg: 249 250 251; /* gray-50 */
+  --surface: 255 255 255;
+  --surface-2: 243 244 246; /* gray-100 */
+  --text: 17 24 39; /* gray-900 */
+  --muted: 75 85 99; /* gray-600 */
+  --border: 229 231 235; /* gray-200 */
+  --accent: 0 226 255;
+  --accent-2: 0 194 220;
+  --font-sans: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
+
+  /* Header / bottom nav */
+  --nav-bg: 255 255 255;
+  --nav-text: 0 0 0;
+
+  /* Sidebar (similar to OperatingAccount) */
+  --sidebar-bg: 243 244 246; /* gray-100 */
+  --sidebar-surface: 229 231 235; /* gray-200 */
+  --sidebar-text: 17 24 39; /* gray-900 */
+  --sidebar-muted: 75 85 99; /* gray-600 */
+  --sidebar-border: 209 213 219; /* gray-300 */
+
+  /* Table head */
+  --thead-bg: 243 244 246; /* surface-2 */
+  --thead-text: 17 24 39; /* text */
+  --thead-muted: 75 85 99; /* muted */
+  --thead-border: 229 231 235; /* border */
+
+  /* Toast */
+  --toast-bg: 15 23 42;
+  --toast-text: 255 255 255;
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+html[data-theme="light"] {
+  color-scheme: light;
+  --bg: 249 250 251;
+  --surface: 255 255 255;
+  --surface-2: 243 244 246;
+  --text: 17 24 39;
+  --muted: 75 85 99;
+  --border: 229 231 235;
+  --nav-bg: 255 255 255;
+  --nav-text: 0 0 0;
+  --sidebar-bg: 243 244 246;
+  --sidebar-surface: 229 231 235;
+  --sidebar-text: 17 24 39;
+  --sidebar-muted: 75 85 99;
+  --sidebar-border: 209 213 219;
+  --thead-bg: 243 244 246;
+  --thead-text: 17 24 39;
+  --thead-muted: 75 85 99;
+  --thead-border: 229 231 235;
+  --toast-bg: 15 23 42;
+  --toast-text: 255 255 255;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+html[data-theme="neutral"] {
+  color-scheme: light;
+  /* Content stays light, chrome (navbar/sidebar/table head) uses dark palette */
+  --bg: 249 250 251; /* gray-50 */
+  --surface: 255 255 255;
+  --surface-2: 243 244 246;
+  --text: 17 24 39;
+  --muted: 75 85 99;
+  --border: 229 231 235;
+  --nav-bg: 15 23 42; /* slate-900 (same as dark) */
+  --nav-text: 255 255 255;
+  --sidebar-bg: 15 23 42; /* slate-900 */
+  --sidebar-surface: 30 41 59; /* slate-800 */
+  --sidebar-text: 243 244 246; /* gray-100 */
+  --sidebar-muted: 156 163 175; /* gray-400 */
+  --sidebar-border: 55 65 81; /* gray-700 */
+  --thead-bg: 39 49 68; /* softened slate (like dark surface-2) */
+  --thead-text: 243 244 246;
+  --thead-muted: 156 163 175;
+  --thead-border: 55 65 81;
+  --toast-bg: 17 24 39;
+  --toast-text: 255 255 255;
+}
+
+html[data-theme="dark"] {
+  color-scheme: dark;
+  /* Modern dark: background darker, surfaces slightly lighter */
+  --bg: 15 23 42; /* slate-900 */
+  --surface: 30 41 59; /* slate-800 */
+  --surface-2: 39 49 68; /* softened slate */
+  --text: 243 244 246; /* gray-100 */
+  --muted: 156 163 175; /* gray-400 */
+  --border: 42 52 72; /* softer than gray-700 */
+  --nav-bg: 15 23 42; /* slate-900 */
+  --nav-text: 255 255 255;
+  --sidebar-bg: 15 23 42; /* slate-900 */
+  --sidebar-surface: 30 41 59; /* slate-800 */
+  --sidebar-text: 243 244 246;
+  --sidebar-muted: 156 163 175;
+  --sidebar-border: 55 65 81;
+  --thead-bg: 39 49 68;
+  --thead-text: 243 244 246;
+  --thead-muted: 156 163 175;
+  --thead-border: 42 52 72;
+  --toast-bg: 15 23 42;
+  --toast-text: 226 232 240;
+}
+
+/* Accent presets (applies to all themes) */
+html[data-accent="cyan"] {
+  --accent: 0 226 255;
+  --accent-2: 0 194 220;
+}
+html[data-accent="indigo"] {
+  --accent: 99 102 241;
+  --accent-2: 79 70 229;
+}
+html[data-accent="emerald"] {
+  --accent: 16 185 129;
+  --accent-2: 5 150 105;
+}
+html[data-accent="rose"] {
+  --accent: 244 63 94;
+  --accent-2: 225 29 72;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-sans);
+  color: rgb(var(--text));
+  background: linear-gradient(180deg, rgb(var(--bg)) 0%, rgb(var(--surface)) 120%);
+  font-synthesis-weight: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
+
+/* Fast migration layer: make common legacy Tailwind grays follow tokens in dark mode */
+html[data-theme="dark"] .bg-white {
+  background-color: rgb(var(--surface)) !important;
+}
+html[data-theme="dark"] .bg-gray-50,
+html[data-theme="dark"] .bg-gray-100 {
+  background-color: rgb(var(--surface-2)) !important;
+}
+html[data-theme="dark"] .text-gray-900,
+html[data-theme="dark"] .text-gray-800,
+html[data-theme="dark"] .text-gray-700 {
+  color: rgb(var(--text)) !important;
+}
+html[data-theme="dark"] .text-gray-600,
+html[data-theme="dark"] .text-gray-500,
+html[data-theme="dark"] .text-gray-400 {
+  color: rgb(var(--muted)) !important;
+}
+html[data-theme="dark"] .border-gray-200,
+html[data-theme="dark"] .border-gray-300,
+html[data-theme="dark"] .border-gray-400 {
+  border-color: rgb(var(--border) / 0.22) !important;
+}
+html[data-theme="dark"] input,
+html[data-theme="dark"] textarea,
+html[data-theme="dark"] select {
+  background-color: rgb(var(--surface-2)) !important;
+  color: rgb(var(--text)) !important;
+  border-color: rgb(var(--border) / 0.22) !important;
+}
+
+/* Sidebar icon theming: many SVGs use fill/stroke="black" inline */
+.app-sidebar svg [fill="black"],
+.app-sidebar svg [fill="black "],
+.app-sidebar svg [stroke="black"],
+.app-sidebar svg [stroke="black "] {
+  fill: currentColor;
+  stroke: currentColor;
+}
+
+/* Bottom nav icon theming: many SVGs use fill/stroke="white" inline */
+.app-bottom-nav svg [fill="white"],
+.app-bottom-nav svg [fill="white "],
+.app-bottom-nav svg [stroke="white"],
+.app-bottom-nav svg [stroke="white "] {
+  fill: currentColor;
+  stroke: currentColor;
+}
+
+/* Optional utility helpers */
+@layer utilities {
+  .bg-app {
+    background-color: rgb(var(--bg));
+  }
+  .bg-surface {
+    background-color: rgb(var(--surface));
+  }
+  .text-app {
+    color: rgb(var(--text));
+  }
+  .text-muted {
+    color: rgb(var(--muted));
+  }
+  .border-app {
+    border-color: rgb(var(--border));
+  }
+}
+
+
+@media (min-width: 1024px) {
+
+  /* Designing for scroll-bar */
+  ::-webkit-scrollbar {
+    width: 7px;
+    height: 7px;
+    z-index: 100000000000000000000000;
+
+}
+
+/* Track */
+::-webkit-scrollbar-track {
+    background: rgb(var(--surface));
+    border-radius: 5px;
+    z-index: 100000000000000000000000;
+
+}
+
+/* Handle */
+::-webkit-scrollbar-thumb {
+    background: rgb(var(--border));
+    border-radius: 5px;
+    z-index: 100000000000000000000000;
+}
+}
+
+
+
+

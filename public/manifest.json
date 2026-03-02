@@ -1,0 +1,27 @@
+{
+    "name": "Gallery Sneakers",
+    "short_name": "Gallery Sneakers",
+    "icons": [
+ 
+      {
+        "src": "/logo.png",
+        "sizes": "384x384",
+        "type": "image/png"
+      },
+      {
+        "src": "/logo.png",
+        "sizes": "512x512",
+        "type": "image/png"
+      }
+    ],
+    "theme_color": "#00E2FF",
+    "background_color": "#00E2FF",
+    "start_url": "/",
+    "display": "standalone",
+    "orientation": "portrait"
+  }
+
+
+
+
+ 

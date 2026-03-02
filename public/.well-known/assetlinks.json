@@ -1,0 +1,8 @@
+[{
+      "relation": ["delegate_permission/common.handle_all_urls"],
+      "target": {
+        "namespace": "android_app",
+        "package_name": "com.lavavelox.app.twa",
+        "sha256_cert_fingerprints": ["FB:F7:55:5F:F1:5D:C5:12:CB:41:ED:04:89:0C:2D:5E:A4:32:3F:4A:8E:21:05:C2:5F:B5:4C:66:1A:71:5D:1C"]
+      }
+    }]
