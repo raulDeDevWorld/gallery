@@ -296,18 +296,23 @@ export default function ReportsPage() {
     setExportingExcel(true)
     try {
       const rangeLabel = drawerDayKey ? keyToLabel(drawerDayKey) : `${desde} — ${hasta}`
-      const summarySheetData = [
-        ['Clave', 'Valor'],
-        ['Sucursal', drawerSucursal?.nombre || drawerSucursal?.id || ''],
-        ['Rango', rangeLabel],
-        ['Total ventas', detailSummary.totalSales],
-        ['Total monto', money(detailSummary.totalAmount)],
-        ['Total unidades', detailSummary.totalUnits],
-        ['Promedio por venta', money(detailSummary.average)],
-        ['Pagos QR', detailSummary.qrPayments],
+      const title = `Detalle ${drawerSucursal?.nombre || drawerSucursal?.id || 'de la sucursal'} · ${rangeLabel}`
+      const statsOrder = [
+        { label: 'Ventas', value: detailSummary.totalSales },
+        { label: 'Recaudado', value: money(detailSummary.totalAmount) },
+        { label: 'Unidades', value: detailSummary.totalUnits },
+        { label: 'Promedio', value: money(detailSummary.average) },
+        { label: 'Pagos QR', value: detailSummary.qrPayments },
       ]
 
-      const detailHeaders = ['Venta', 'Fecha', 'Método', 'Producto', 'Tallas', 'Unidades', 'Precio unitario', 'Subtotal']
+      const summarySheetData = [
+        [title],
+        [],
+        ['Resumen', 'Valor'],
+        ...statsOrder.map((stat) => [stat.label, stat.value]),
+      ]
+
+      const detailHeaders = ['Venta', 'Fecha', 'Método', 'Productos', 'Unidades', 'Total']
       const detailRowsData = []
       detailRows.forEach((row) => {
         detailRowsData.push([
@@ -315,20 +320,26 @@ export default function ReportsPage() {
           row.dateLabel || '',
           row.metodoPago || '',
           '',
-          '',
           row.units,
-          '',
           row.total,
         ])
         ;(row.productRows || []).forEach((product) => {
+          const productLines = [
+            product.label,
+            product.tallas || '',
+            `${product.units || 0} uds`,
+          ]
+          if (product.unitPrice) {
+            productLines.push(`${money(product.unitPrice)} c/u`)
+          }
+          productLines.push(money(product.subtotal))
+
           detailRowsData.push([
             '',
             '',
             '',
-            product.label,
-            product.tallas,
+            productLines.join('\n'),
             product.units,
-            product.unitPrice,
             product.subtotal,
           ])
         })
