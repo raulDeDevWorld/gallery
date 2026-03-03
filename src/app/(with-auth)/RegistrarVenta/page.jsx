@@ -93,6 +93,28 @@ function MetodoPagoToggle({ value, onChange }) {
   )
 }
 
+function PaymentQRCode({ url, sucursalName }) {
+  const displayName = sucursalName ? `de ${sucursalName}` : 'de la sucursal'
+
+  return (
+    <div className="mt-4 flex flex-col items-center gap-2 rounded-3xl border border-border/30 bg-white/90 p-4 text-center shadow-sm">
+      <div className="text-[12px] font-semibold text-text">Escanea el QR {displayName}</div>
+      {url ? (
+        <div className="flex h-44 w-44 items-center justify-center overflow-hidden rounded-3xl border border-border/30 bg-white/80 p-3 shadow-inner">
+          <img src={url} alt={`QR ${displayName}`} className="h-full w-full object-contain" />
+        </div>
+      ) : (
+        <div className="flex h-32 w-32 items-center justify-center rounded-2xl border border-border/40 bg-surface/50 text-[12px] text-muted">
+          QR no disponible
+        </div>
+      )}
+      <p className="text-[11px] text-muted">
+        Abre la app de pagos QR y apunta la cámara a este código para enviar el pago directamente a la sucursal.
+      </p>
+    </div>
+  )
+}
+
 export default function Page() {
   const { user, userDB, sucursales, setSucursales, modal, setModal, setUserSuccess } = useUser()
 
@@ -144,6 +166,13 @@ export default function Page() {
     for (const s of sucursalesArr) map[s.uuid] = s.nombre
     return map
   }, [sucursalesArr])
+
+  const activeSucursal = useMemo(() => {
+    if (!sucursales || typeof sucursales !== 'object') return null
+    return sucursales[activeSucursalId] || null
+  }, [activeSucursalId, sucursales])
+  const sucursalQrUrl = activeSucursal?.qrUrl || null
+  const activeSucursalName = activeSucursal?.nombre || sucursalNameById[activeSucursalId] || ''
 
   useEffect(() => {
     if (!sucursalesArr.length) return
@@ -488,43 +517,43 @@ export default function Page() {
       {cartQtyTotal > 0 ? (
         mounted && typeof document !== 'undefined' && !cartOpen
           ? createPortal(
-              <div className="fixed inset-x-0 bottom-[2px] z-40 px-4 pb-[env(safe-area-inset-bottom)] lg:bottom-4 xl:hidden pointer-events-none">
-                <div className="mx-auto max-w-[520px] pointer-events-auto">
-                  <div className="rounded-[28px] bg-surface/95 p-2 text-text shadow-2xl ring-1 ring-border/25 backdrop-blur">
-                    <button
-                      type="button"
-                      className="flex w-full items-center justify-between gap-3 rounded-[22px] bg-surface-2/70 px-4 py-3 ring-1 ring-border/15 transition hover:bg-surface-2 active:scale-[0.99]"
-                      onClick={() => setCartOpen(true)}
-                      aria-label="Abrir carrito"
-                    >
-                      <div className="flex min-w-0 items-center gap-3">
-                        <div className="inline-flex h-10 w-10 items-center justify-center rounded-2xl bg-surface ring-1 ring-border/15">
-                          <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" aria-hidden="true">
-                            <path d="M6 6h15l-1.5 9H7.2L6 6Z" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" />
-                            <path d="M6 6 5 3H2" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-                            <path d="M9 20a1 1 0 100-2 1 1 0 000 2ZM18 20a1 1 0 100-2 1 1 0 000 2Z" fill="currentColor" />
-                          </svg>
-                        </div>
-                        <div className="min-w-0">
-                          <div className="truncate text-[13px] font-semibold">Carrito</div>
-                          <div className="truncate text-[12px] text-muted">
-                            {cartQtyTotal} unid. - Total {money(total)}
-                          </div>
-                        </div>
-                      </div>
-
-                      <div className="inline-flex items-center gap-1 rounded-2xl bg-accent px-3 py-2 text-[12px] font-semibold text-black ring-1 ring-accent/25">
-                        Ver
-                        <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" aria-hidden="true">
-                          <path d="M9 6l6 6-6 6" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
+            <div className="fixed inset-x-0 bottom-[2px] z-40 px-4 pb-[env(safe-area-inset-bottom)] lg:bottom-4 xl:hidden pointer-events-none">
+              <div className="mx-auto max-w-[520px] pointer-events-auto">
+                <div className="rounded-[28px] bg-surface/95 p-2 text-text shadow-2xl ring-1 ring-border/25 backdrop-blur">
+                  <button
+                    type="button"
+                    className="flex w-full items-center justify-between gap-3 rounded-[22px] bg-surface-2/70 px-4 py-3 ring-1 ring-border/15 transition hover:bg-surface-2 active:scale-[0.99]"
+                    onClick={() => setCartOpen(true)}
+                    aria-label="Abrir carrito"
+                  >
+                    <div className="flex min-w-0 items-center gap-3">
+                      <div className="inline-flex h-10 w-10 items-center justify-center rounded-2xl bg-surface ring-1 ring-border/15">
+                        <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" aria-hidden="true">
+                          <path d="M6 6h15l-1.5 9H7.2L6 6Z" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" />
+                          <path d="M6 6 5 3H2" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                          <path d="M9 20a1 1 0 100-2 1 1 0 000 2ZM18 20a1 1 0 100-2 1 1 0 000 2Z" fill="currentColor" />
                         </svg>
                       </div>
-                    </button>
-                  </div>
+                      <div className="min-w-0">
+                        <div className="truncate text-[13px] font-semibold">Carrito</div>
+                        <div className="truncate text-[12px] text-muted">
+                          {cartQtyTotal} unid. - Total {money(total)}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="inline-flex items-center gap-1 rounded-2xl bg-accent px-3 py-2 text-[12px] font-semibold text-black ring-1 ring-accent/25">
+                      Ver
+                      <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" aria-hidden="true">
+                        <path d="M9 6l6 6-6 6" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
+                      </svg>
+                    </div>
+                  </button>
                 </div>
-              </div>,
-              document.body
-            )
+              </div>
+            </div>,
+            document.body
+          )
           : null
       ) : null}
 
@@ -546,6 +575,7 @@ export default function Page() {
                       <option value="marcaLower">Marca</option>
                       <option value="modeloLower">Modelo</option>
                       <option value="nombreLower">Nombre</option>
+                      <option value="codigoLower">Codigo</option>
                     </select>
                   </div>
                 </div>
@@ -615,11 +645,11 @@ export default function Page() {
                   const pid = safeId(p.__key)
                   const state = stockCache?.[pid]
                   const tallas = state?.tallas || null
-                const keys = tallas
-                  ? Object.keys(tallas).sort((a, b) =>
+                  const keys = tallas
+                    ? Object.keys(tallas).sort((a, b) =>
                       String(a).trim().localeCompare(String(b).trim(), undefined, { numeric: true })
                     )
-                  : []
+                    : []
                   const imgSrc = p?.urlImagen || p?.url || p?.imagen || ''
 
                   return (
@@ -665,16 +695,16 @@ export default function Page() {
                             ) : keys.length === 0 ? (
                               <div className="text-[12px] text-muted">Sin stock.</div>
                             ) : (
-                            keys.map((t) => {
-                              const stock = asNumber(tallas?.[t], 0)
-                              const qty = qtyInCart(pid, t)
-                              const maxed = stock > 0 && qty >= stock
-                              const canRequest = personal && mySucursalId && stock === 0
-                              const labelT = String(t).trim()
-                              const rawKey = state?.tallasMap?.[t] || t
+                              keys.map((t) => {
+                                const stock = asNumber(tallas?.[t], 0)
+                                const qty = qtyInCart(pid, t)
+                                const maxed = stock > 0 && qty >= stock
+                                const canRequest = personal && mySucursalId && stock === 0
+                                const labelT = String(t).trim()
+                                const rawKey = state?.tallasMap?.[t] || t
 
-                              if (stock === 0) {
-                                return (
+                                if (stock === 0) {
+                                  return (
                                     <button
                                       key={t}
                                       type="button"
@@ -686,12 +716,12 @@ export default function Page() {
                                         if (canRequest) return openSolicitud(p, t)
                                       }}
                                     >
-                                    <span className="text-text">T{labelT}</span>
-                                    <span className="text-muted">{stock}</span>
-                                    {canRequest ? <span className="ml-1 text-[11px] text-muted">Solicitar</span> : null}
-                                  </button>
-                                )
-                              }
+                                      <span className="text-text">T{labelT}</span>
+                                      <span className="text-muted">{stock}</span>
+                                      {canRequest ? <span className="ml-1 text-[11px] text-muted">Solicitar</span> : null}
+                                    </button>
+                                  )
+                                }
 
                                 return (
                                   <div
@@ -716,8 +746,8 @@ export default function Page() {
                                       title={maxed ? 'Maximo alcanzado' : 'Toca para sumar 1'}
                                       onClick={() => addOne(p, t, stock, rawKey)}
                                     >
-	                                    <span className="text-text">T{labelT}</span>
-	                                    <span className="text-muted">{stock}</span>
+                                      <span className="text-text">T{labelT}</span>
+                                      <span className="text-muted">{stock}</span>
                                       {qty > 0 ? (
                                         <span className="ml-auto rounded-xl bg-surface-2/80 px-2 py-0.5 text-[11px] text-text ring-1 ring-border/15">
                                           x{qty}
@@ -761,6 +791,9 @@ export default function Page() {
             </div>
             <MetodoPagoToggle value={metodoPago} onChange={setMetodoPago} />
           </div>
+          {metodoPago === 'qr' ? (
+            <PaymentQRCode url={sucursalQrUrl} sucursalName={activeSucursalName} />
+          ) : null}
 
           <div className="mt-4 space-y-3">
             {cartItems.length === 0 ? (
@@ -826,6 +859,9 @@ export default function Page() {
               <div className="text-[12px] font-semibold text-muted">Metodo de pago</div>
               <MetodoPagoToggle value={metodoPago} onChange={setMetodoPago} />
             </div>
+            {metodoPago === 'qr' ? (
+              <PaymentQRCode url={sucursalQrUrl} sucursalName={activeSucursalName} />
+            ) : null}
             <div className="flex items-center justify-between">
               <div className="text-[13px] font-semibold text-text">Total</div>
               <div className="text-[16px] font-semibold text-text">{money(total)}</div>
@@ -880,12 +916,12 @@ export default function Page() {
 
       <div className="h-24 xl:hidden" />
 
-        <Drawer
-          open={Boolean(drawer)}
-          title="Solicitar transferencia"
-          subtitle={drawer ? `${drawer.producto?.marca || ''} ${drawer.producto?.modelo || ''} - Talla ${String(drawer.talla || '').trim()}` : ''}
-          onClose={() => setDrawer(null)}
-          footer={
+      <Drawer
+        open={Boolean(drawer)}
+        title="Solicitar transferencia"
+        subtitle={drawer ? `${drawer.producto?.marca || ''} ${drawer.producto?.modelo || ''} - Talla ${String(drawer.talla || '').trim()}` : ''}
+        onClose={() => setDrawer(null)}
+        footer={
           <div className="flex items-center justify-end gap-2">
             <button
               type="button"

@@ -25,7 +25,7 @@ export default function ProductsPage() {
   const [search, setSearch] = useState('')
   const [searchDebounced, setSearchDebounced] = useState('')
 
-  const [draft, setDraft] = useState({}) // { [productoId]: { marca, modelo, nombre, precio, activo } }
+  const [draft, setDraft] = useState({}) // { [productoId]: { marca, modelo, nombre, precio, activo, codigo } }
   const [postImage, setPostImage] = useState({})
   const [urlPostImage, setUrlPostImage] = useState({})
 
@@ -72,6 +72,7 @@ export default function ProductsPage() {
             <option value="nombreLower">Nombre</option>
             <option value="marcaLower">Marca</option>
             <option value="modeloLower">Modelo</option>
+            <option value="codigoLower">Código</option>
           </select>
         </label>
 
@@ -114,6 +115,7 @@ export default function ProductsPage() {
       const modelo = draft?.[productoId]?.modelo ?? p?.modelo ?? ''
       const nombre = draft?.[productoId]?.nombre ?? p?.nombre ?? ''
       const precio = draft?.[productoId]?.precio ?? p?.precio ?? 0
+      const codigo = draft?.[productoId]?.codigo ?? p?.codigo ?? ''
       const activo = draft?.[productoId]?.activo ?? p?.activo ?? true
 
       let urlImagen = p?.urlImagen ?? null
@@ -124,7 +126,7 @@ export default function ProductsPage() {
       await guardarProducto({
         productoId,
         marcaLowerAnterior: p?.marcaLower,
-        producto: { marca, modelo, nombre, precio, activo, urlImagen, creadoEn: p?.creadoEn },
+        producto: { marca, modelo, nombre, precio, activo, urlImagen, creadoEn: p?.creadoEn, codigo },
       })
 
       setDraft((prev) => {
@@ -176,6 +178,7 @@ export default function ProductsPage() {
           precio: p?.precio,
           urlImagen: p?.urlImagen ?? null,
           activo: false,
+          codigo: p?.codigo ?? '',
           creadoEn: p?.creadoEn,
         },
       })
@@ -198,7 +201,13 @@ export default function ProductsPage() {
         value: search,
         onChange: (e) => setSearch(e.target.value),
         placeholder:
-          searchBy === 'marcaLower' ? 'Buscar por marca...' : searchBy === 'modeloLower' ? 'Buscar por modelo...' : 'Buscar por nombre...',
+          searchBy === 'marcaLower'
+            ? 'Buscar por marca...'
+            : searchBy === 'modeloLower'
+            ? 'Buscar por modelo...'
+            : searchBy === 'codigoLower'
+            ? 'Buscar por código...'
+            : 'Buscar por nombre...',
       }}
       footer={
         <TablePager
@@ -226,7 +235,7 @@ export default function ProductsPage() {
         </Modal>
       )}
 
-      <Table minWidth={1100}>
+      <Table minWidth={1200}>
         <THead>
           <tr>
             <th scope="col" className="min-w-[80px] px-3 py-3">
@@ -237,6 +246,9 @@ export default function ProductsPage() {
             </th>
             <th scope="col" className="min-w-[140px] px-3 py-3">
               Nombre
+            </th>
+            <th scope="col" className="min-w-[90px] px-3 py-3">
+              Código
             </th>
             <th scope="col" className="min-w-[90px] px-3 py-3 text-right">
               Precio
@@ -255,13 +267,13 @@ export default function ProductsPage() {
         <tbody>
           {cursor.loading && cursor.items.length === 0 ? (
             <tr>
-              <td colSpan={7} className="px-4 py-10 text-center text-[13px] text-muted">
+              <td colSpan={8} className="px-4 py-10 text-center text-[13px] text-muted">
                 Cargando...
               </td>
             </tr>
           ) : cursor.items.length === 0 ? (
             <tr>
-              <td colSpan={7} className="px-4 py-10 text-center text-[13px] text-muted">
+              <td colSpan={8} className="px-4 py-10 text-center text-[13px] text-muted">
                 Sin resultados.
               </td>
             </tr>
@@ -305,6 +317,17 @@ export default function ProductsPage() {
                       />
                     ) : (
                       p.nombre
+                    )}
+                  </td>
+                  <td className="px-3 py-3 text-text">
+                    {admin ? (
+                      <input
+                        className="h-9 w-full rounded-xl bg-surface/60 px-3 text-[12px] text-text ring-1 ring-border/15 outline-none focus:ring-2 focus:ring-accent/25"
+                        defaultValue={p.codigo || ''}
+                        onChange={(e) => setDraftField(productoId, 'codigo', e.target.value)}
+                      />
+                    ) : (
+                      p.codigo || '—'
                     )}
                   </td>
                   <td className="px-3 py-3 text-text text-right">

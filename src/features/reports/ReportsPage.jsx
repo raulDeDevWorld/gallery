@@ -6,6 +6,7 @@ import Table, { THead } from '@/components/Table'
 import LoaderBlack from '@/components/LoaderBlack'
 import Drawer from '@/components/Drawer'
 import Button from '@/components/Button'
+import * as XLSX from 'xlsx'
 import { useUser } from '@/context/'
 import { getRangeByChild, getRangeByKey, getValue, readUserData } from '@/firebase/database'
 import { isAdmin } from '@/lib/roles'
@@ -64,6 +65,41 @@ function money(n) {
   return new Intl.NumberFormat('es-BO', { maximumFractionDigits: 0 }).format(asNumber(n, 0))
 }
 
+function summarizeItems(items = {}) {
+  const rows = []
+  const productRows = []
+  let units = 0
+  const iterator = items && typeof items === 'object' ? Object.entries(items) : []
+  for (const [productId, detail] of iterator) {
+    const tallas = detail?.tallas && typeof detail.tallas === 'object' ? detail.tallas : {}
+    const tallasList = []
+    let productUnits = 0
+    for (const [label, qtyRaw] of Object.entries(tallas)) {
+      const qty = asNumber(qtyRaw, 0)
+      if (qty <= 0) continue
+      productUnits += qty
+      tallasList.push(`${label}×${qty}`)
+    }
+    if (productUnits <= 0) continue
+    units += productUnits
+    const nameParts = [detail?.marca, detail?.modelo, detail?.nombre].filter(Boolean).join(' ').trim()
+    const label = nameParts || productId || 'Producto'
+    rows.push(tallasList.length ? `${label} (${tallasList.join(', ')})` : label)
+    const unitPrice = asNumber(detail?.precioUnitario, 0)
+    productRows.push({
+      productId,
+      label,
+      tallas: tallasList.join(', '),
+      units: productUnits,
+      unitPrice,
+      subtotal: unitPrice * productUnits,
+    })
+  }
+  return { description: rows.join(' • '), units, productRows }
+}
+
+const dateTimeFormatter = new Intl.DateTimeFormat('es-BO', { dateStyle: 'short', timeStyle: 'short' })
+
 export default function ReportsPage() {
   const { userDB, sucursales, setSucursales, setUserSuccess, modal, setModal } = useUser()
   const admin = isAdmin(userDB)
@@ -84,6 +120,9 @@ export default function ReportsPage() {
   const [drawerTab, setDrawerTab] = useState('ventas') // ventas|productos|movimientos
   const [drawerSucursal, setDrawerSucursal] = useState(null) // { id, nombre }
   const [drawerDayKey, setDrawerDayKey] = useState(null) // yyyymmdd|null
+  const [detailPanelOpen, setDetailPanelOpen] = useState(false)
+  const [ventaDetailsById, setVentaDetailsById] = useState({})
+  const detailItemsQueryRef = useRef('')
 
   const [ventasLoading, setVentasLoading] = useState(false)
   const [ventas, setVentas] = useState([]) // [{ ventaId, creadoEn, total, estado }]
@@ -96,6 +135,7 @@ export default function ReportsPage() {
 
   const [movsLoading, setMovsLoading] = useState(false)
   const [movsByVentaId, setMovsByVentaId] = useState({})
+  const [exportingExcel, setExportingExcel] = useState(false)
 
   const lastDrawerQueryRef = useRef('')
 
@@ -172,6 +212,11 @@ export default function ReportsPage() {
   function closeDrawer() {
     setDrawerOpen(false)
     setDrawerTab('ventas')
+  }
+
+  function closeDetailPanel() {
+    setDetailPanelOpen(false)
+    setDrawerOpen(false)
     setDrawerSucursal(null)
     setDrawerDayKey(null)
     setVentas([])
@@ -183,13 +228,14 @@ export default function ReportsPage() {
     setVentaDetailLoading(false)
     setProductosLoading(false)
     setMovsLoading(false)
+    setVentaDetailsById({})
   }
 
-  function openDrawerForSucursal({ id, nombre, dayKey = null }) {
+  function initDetailView({ id, nombre, dayKey = null }) {
+    if (!id) return
     setDrawerSucursal({ id, nombre })
     setDrawerDayKey(dayKey)
-    setDrawerTab('ventas')
-    setDrawerOpen(true)
+    setDetailPanelOpen(true)
     setVentas([])
     setVentaSel(null)
     setVentaDetail(null)
@@ -197,11 +243,125 @@ export default function ReportsPage() {
     setMovsByVentaId({})
   }
 
+  function openDrawerForSucursal({ id, nombre, dayKey = null }) {
+    const payload = { id, nombre, dayKey }
+    initDetailView(payload)
+    setDrawerOpen(true)
+    setDrawerTab('ventas')
+  }
+
   const drawerTitle = drawerSucursal?.nombre ? `Sucursal: ${drawerSucursal.nombre}` : 'Detalle'
   const drawerSubtitle = drawerDayKey ? `DÃ­a: ${keyToLabel(drawerDayKey)}` : `Rango: ${desde} â†’ ${hasta}`
+  const detailRows = useMemo(() => {
+    const base = Array.isArray(ventas) ? ventas : []
+    return base
+      .map((v) => {
+        const created = asNumber(v?.creadoEn, 0)
+        const dateLabel = created ? dateTimeFormatter.format(new Date(created)) : ''
+        const detalleVenta = ventaDetailsById?.[v?.ventaId]
+        const parsed = summarizeItems(detalleVenta?.items || v?.items)
+        const metodo = String(v?.metodoPago || v?.metodo || v?.formaPago || '').trim() || 'efectivo'
+        return {
+          ventaId: v?.ventaId || v?.__key || '',
+          created,
+          dateLabel,
+          total: asNumber(v?.total, 0),
+          estado: String(v?.estado || '').trim() || 'pendiente',
+          metodoPago: metodo,
+          itemsDescription: parsed.description || 'Sin items',
+          units: parsed.units || 0,
+          productRows: parsed.productRows || [],
+        }
+      })
+      .sort((a, b) => (b.created || 0) - (a.created || 0))
+  }, [ventas, ventaDetailsById])
+
+  const detailSummary = useMemo(() => {
+    const totalSales = detailRows.length
+    const totalAmount = detailRows.reduce((acc, row) => acc + row.total, 0)
+    const totalUnits = detailRows.reduce((acc, row) => acc + row.units, 0)
+    const qrPayments = detailRows.filter((row) => String(row.metodoPago).toLowerCase() === 'qr').length
+    const average = totalSales ? totalAmount / totalSales : 0
+    return { totalSales, totalAmount, totalUnits, average, qrPayments }
+  }, [detailRows])
+
+  const detailSectionOpen = detailPanelOpen && Boolean(drawerSucursal?.id)
+
+  async function exportDetailExcel() {
+    if (!detailSectionOpen) return
+    if (!detailRows.length) {
+      setUserSuccess?.('Espera a que se cargue el detalle antes de exportar.')
+      return
+    }
+    setExportingExcel(true)
+    try {
+      const rangeLabel = drawerDayKey ? keyToLabel(drawerDayKey) : `${desde} — ${hasta}`
+      const summarySheetData = [
+        ['Clave', 'Valor'],
+        ['Sucursal', drawerSucursal?.nombre || drawerSucursal?.id || ''],
+        ['Rango', rangeLabel],
+        ['Total ventas', detailSummary.totalSales],
+        ['Total monto', money(detailSummary.totalAmount)],
+        ['Total unidades', detailSummary.totalUnits],
+        ['Promedio por venta', money(detailSummary.average)],
+        ['Pagos QR', detailSummary.qrPayments],
+      ]
+
+      const detailHeaders = ['Venta', 'Fecha', 'Método', 'Producto', 'Tallas', 'Unidades', 'Precio unitario', 'Subtotal']
+      const detailRowsData = []
+      detailRows.forEach((row) => {
+        detailRowsData.push([
+          row.ventaId ? `Venta ${String(row.ventaId).slice(0, 8)}` : '',
+          row.dateLabel || '',
+          row.metodoPago || '',
+          '',
+          '',
+          row.units,
+          '',
+          row.total,
+        ])
+        ;(row.productRows || []).forEach((product) => {
+          detailRowsData.push([
+            '',
+            '',
+            '',
+            product.label,
+            product.tallas,
+            product.units,
+            product.unitPrice,
+            product.subtotal,
+          ])
+        })
+      })
+
+      const workbook = XLSX.utils.book_new()
+      const summarySheet = XLSX.utils.aoa_to_sheet(summarySheetData)
+      const detailSheet = XLSX.utils.aoa_to_sheet([detailHeaders, ...detailRowsData])
+      XLSX.utils.book_append_sheet(workbook, summarySheet, 'Resumen')
+      XLSX.utils.book_append_sheet(workbook, detailSheet, 'Detalle ventas')
+
+      const buffer = XLSX.write(workbook, { bookType: 'xlsx', type: 'array' })
+      const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })
+      const safeSucursal = (drawerSucursal?.nombre || drawerSucursal?.id || 'sucursal').replace(/[^a-zA-Z0-9]+/g, '_').toLowerCase()
+      const rangeSegment = drawerDayKey || `${desde.replace(/-/g, '')}-${hasta.replace(/-/g, '')}`
+      const fileName = `reporte_${safeSucursal}_${rangeSegment}.xlsx`
+      const anchor = document.createElement('a')
+      anchor.href = URL.createObjectURL(blob)
+      anchor.download = fileName
+      anchor.style.display = 'none'
+      document.body.appendChild(anchor)
+      anchor.click()
+      document.body.removeChild(anchor)
+      URL.revokeObjectURL(anchor.href)
+    } catch (err) {
+      setUserSuccess?.(err?.code || err?.message || 'repeat')
+    } finally {
+      setExportingExcel(false)
+    }
+  }
 
   useEffect(() => {
-    if (!drawerOpen) return
+    if (!drawerOpen && !detailPanelOpen) return
     if (!drawerSucursal?.id) return
 
     const startTs = drawerDayKey ? startOfDayTs(keyToISO(drawerDayKey)) : startOfDayTs(desde)
@@ -236,7 +396,43 @@ export default function ReportsPage() {
     return () => {
       cancelled = true
     }
-  }, [desde, hasta, drawerDayKey, drawerOpen, drawerSucursal?.id, setUserSuccess])
+  }, [desde, hasta, drawerDayKey, drawerOpen, detailPanelOpen, drawerSucursal?.id, setUserSuccess])
+
+  useEffect(() => {
+    if (!detailPanelOpen || !ventas?.length) {
+      setVentaDetailsById({})
+      detailItemsQueryRef.current = ''
+      return
+    }
+
+    const ids = ventas.map((v) => v.ventaId).filter(Boolean)
+    if (!ids.length || !drawerSucursal?.id) {
+      setVentaDetailsById({})
+      return
+    }
+
+    const queryId = `${drawerSucursal.id}|${drawerDayKey || 'range'}|${ids.join(',')}`
+    detailItemsQueryRef.current = queryId
+    let cancelled = false
+
+    ;(async () => {
+      try {
+        const pairs = await Promise.all(ids.map((id) => getValue(`ventas/${id}`).catch(() => null)))
+        if (cancelled || detailItemsQueryRef.current !== queryId) return
+        const next = {}
+        for (let i = 0; i < ids.length; i++) {
+          if (pairs[i]) next[ids[i]] = pairs[i]
+        }
+        setVentaDetailsById(next)
+      } catch (err) {
+        if (!cancelled) setUserSuccess?.(err?.code || err?.message || 'repeat')
+      }
+    })()
+
+    return () => {
+      cancelled = true
+    }
+  }, [ventas, detailPanelOpen, drawerSucursal?.id, drawerDayKey, setUserSuccess])
 
   useEffect(() => {
     if (!drawerOpen) return
@@ -618,11 +814,117 @@ export default function ReportsPage() {
                   })}
                 </div>
               )}
-              <div className="text-[12px] text-muted">Tip: se crean como `movimientosInventario/venta_{{ventaId}}`.</div>
+              <div className="text-[12px] text-muted">
+                Tip: se crean como <span className="font-mono">movimientosInventario/venta_&lt;ventaId&gt;</span>.
+              </div>
             </div>
           ) : null}
         </div>
       </Drawer>
+
+      {detailSectionOpen ? (
+        <div className="mb-4 space-y-4 rounded-3xl border border-border/40 bg-surface/50 p-4 shadow-sm">
+          <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+            <div>
+              <div className="text-[12px] text-muted">
+                Detalle {drawerSucursal?.nombre || drawerSucursal?.id || 'de la sucursal'} ·
+                {drawerDayKey ? ` ${keyToLabel(drawerDayKey)}` : ` ${desde} — ${hasta}`}
+              </div>
+              <div className="mt-1 text-[13px] font-semibold text-text">
+                {detailRows.length} ventas · {money(detailSummary.totalAmount)}
+              </div>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Button theme="Secondary" styled="w-full sm:w-auto" click={closeDetailPanel}>
+                Cerrar detalle
+              </Button>
+              <Button
+                theme="Secondary"
+                styled="w-full sm:w-auto"
+                disabled={!drawerSucursal?.id}
+                click={() =>
+                  openDrawerForSucursal({ id: drawerSucursal?.id, nombre: drawerSucursal?.nombre, dayKey: drawerDayKey })
+                }
+              >
+                Ver ventas (modal)
+              </Button>
+              <Button
+                theme="Primary"
+                styled="w-full sm:w-auto"
+                click={exportDetailExcel}
+                disabled={exportingExcel || !detailRows.length}
+              >
+                {exportingExcel ? 'Exportando...' : detailRows.length ? 'Exportar Excel' : 'Sin ventas para exportar'}
+              </Button>
+            </div>
+          </div>
+
+          <div className="grid gap-3 md:grid-cols-5">
+            {[
+              { label: 'Ventas', value: detailSummary.totalSales },
+              { label: 'Recaudado', value: money(detailSummary.totalAmount) },
+              { label: 'Unidades', value: detailSummary.totalUnits },
+              { label: 'Promedio', value: money(detailSummary.average) },
+              { label: 'Pagos QR', value: detailSummary.qrPayments },
+            ].map((stat) => (
+              <div key={stat.label} className="rounded-2xl bg-white/80 p-3 text-center shadow-sm ring-1 ring-border/20">
+                <div className="text-[11px] uppercase tracking-wide text-muted">{stat.label}</div>
+                <div className="mt-1 text-[16px] font-semibold text-text">{stat.value}</div>
+              </div>
+            ))}
+          </div>
+
+          <div className="overflow-x-auto">
+            <Table className="min-w-[900px]">
+              <THead>
+                <tr>
+                  <th className="px-3 py-3 text-left text-[11px] uppercase tracking-wide text-muted">Venta</th>
+                  <th className="px-3 py-3 text-left text-[11px] uppercase tracking-wide text-muted">Fecha</th>
+                  <th className="px-3 py-3 text-left text-[11px] uppercase tracking-wide text-muted">Método</th>
+                  <th className="px-3 py-3 text-left text-[11px] uppercase tracking-wide text-muted">Productos</th>
+                  <th className="px-3 py-3 text-right text-[11px] uppercase tracking-wide text-muted">Unidades</th>
+                  <th className="px-3 py-3 text-right text-[11px] uppercase tracking-wide text-muted">Total</th>
+                </tr>
+              </THead>
+              <tbody>
+                {detailRows.map((row) => (
+                  <tr
+                    key={row.ventaId || row.dateLabel}
+                    className="border-b border-transparent odd:bg-surface/10 hover:bg-surface/30"
+                  >
+                    <td className="px-3 py-2 text-[13px] font-semibold text-text">
+                      {row.ventaId ? `Venta ${String(row.ventaId).slice(0, 8)}` : '—'}
+                    </td>
+                    <td className="px-3 py-2 text-[13px] text-text">{row.dateLabel || '—'}</td>
+                    <td className="px-3 py-2 text-[13px] text-text">{row.metodoPago}</td>
+                    <td className="px-3 py-2 text-[12px] text-text">
+                      {row.productRows.length ? (
+                        <div className="space-y-1">
+                          {row.productRows.map((product) => (
+                            <div key={`${product.productId}-${product.label}`} className="rounded-2xl bg-surface/70 p-2 ring-1 ring-border/10">
+                              <div className="text-[12px] font-semibold text-text">{product.label}</div>
+                              <div className="flex flex-wrap items-center gap-2 text-[11px] text-muted">
+                                {product.tallas ? <span>{product.tallas}</span> : null}
+                                <span>{product.units} uds</span>
+                                <span>{money(product.subtotal)}</span>
+                                {product.unitPrice ? <span className="text-[10px] text-muted">({money(product.unitPrice)} c/u)</span> : null}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="text-[12px] text-muted">Sin items</div>
+                      )}
+                    </td>
+                    <td className="px-3 py-2 text-right text-[13px] text-text">{row.units}</td>
+                    <td className="px-3 py-2 text-right text-[13px] font-semibold text-text">{money(row.total)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </Table>
+          </div>
+        </div>
+      ) : null}
 
       <Table minWidth={900}>
         <THead>
@@ -658,13 +960,13 @@ export default function ReportsPage() {
                 <td className="px-3 py-3 text-text text-right">{r.cantidadVentas}</td>
                 <td className="px-3 py-3 text-text text-right">{money(r.total)}</td>
                 <td className="px-3 py-3 text-right">
-                  <button
-                    type="button"
-                    className="text-[12px] font-semibold text-muted hover:text-text"
-                    onClick={() => openDrawerForSucursal({ id: r.sucursalId, nombre: r.sucursalNombre, dayKey: null })}
-                  >
-                    Ver
-                  </button>
+                    <button
+                      type="button"
+                      className="text-[12px] font-semibold text-muted hover:text-text"
+                      onClick={() => initDetailView({ id: r.sucursalId, nombre: r.sucursalNombre, dayKey: null })}
+                    >
+                      Ver
+                    </button>
                 </td>
               </tr>
             ))
@@ -675,16 +977,16 @@ export default function ReportsPage() {
                 <td className="px-3 py-3 text-text text-right">{r.cantidadVentas}</td>
                 <td className="px-3 py-3 text-text text-right">{money(r.total)}</td>
                 <td className="px-3 py-3 text-right">
-                  <button
-                    type="button"
-                    className="text-[12px] font-semibold text-muted hover:text-text"
-                    onClick={() => {
-                      const s = sucursalesArr.find((x) => x.uuid === sucursalId)
-                      openDrawerForSucursal({ id: sucursalId, nombre: s?.nombre || sucursalId, dayKey: r.dia })
-                    }}
-                  >
-                    Ver
-                  </button>
+                    <button
+                      type="button"
+                      className="text-[12px] font-semibold text-muted hover:text-text"
+                      onClick={() => {
+                        const s = sucursalesArr.find((x) => x.uuid === sucursalId)
+                        initDetailView({ id: sucursalId, nombre: s?.nombre || sucursalId, dayKey: r.dia })
+                      }}
+                    >
+                      Ver
+                    </button>
                 </td>
               </tr>
             ))

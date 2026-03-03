@@ -43,7 +43,7 @@ export default function Page() {
   const formRef = useRef(null)
   const afterRef = useRef('productos') // 'productos' | 'stock'
 
-  const [producto, setProducto] = useState({ marca: '', modelo: '', nombre: '', precio: '' })
+  const [producto, setProducto] = useState({ marca: '', modelo: '', nombre: '', precio: '', codigo: '' })
   const [postImage, setPostImage] = useState(null)
   const [urlPostImage, setUrlPostImage] = useState(null)
 
@@ -76,6 +76,7 @@ export default function Page() {
     const modelo = String(producto.modelo || '').trim()
     const nombre = String(producto.nombre || '').trim()
     const precio = Number(producto.precio || 0)
+    const codigo = String(producto.codigo || '').trim()
 
     if (!marca || !modelo || !nombre || !Number.isFinite(precio) || precio <= 0) {
       return setUserSuccess?.('Completa el formulario')
@@ -94,7 +95,7 @@ export default function Page() {
 
       await guardarProducto({
         productoId,
-        producto: { marca, modelo, nombre, precio, urlImagen, activo: true },
+        producto: { marca, modelo, nombre, precio, urlImagen, activo: true, codigo },
       })
 
       setModal('')
@@ -180,6 +181,10 @@ export default function Page() {
 
           <Field label="Nombre">
             <input className={inputClass()} value={producto.nombre} onChange={(e) => setField('nombre', e.target.value)} placeholder="Black" />
+          </Field>
+
+          <Field label="Código (opcional)">
+            <input className={inputClass()} value={producto.codigo} onChange={(e) => setField('codigo', e.target.value)} placeholder="SKU / interno" />
           </Field>
 
           <Field label="Precio">

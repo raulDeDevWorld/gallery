@@ -146,6 +146,7 @@ export default function InventoryPage() {
             <option value="nombreLower">Nombre</option>
             <option value="marcaLower">Marca</option>
             <option value="modeloLower">Modelo</option>
+            <option value="codigoLower">Código</option>
           </select>
         </label>
 
@@ -354,7 +355,13 @@ export default function InventoryPage() {
         value: search,
         onChange: (e) => setSearch(e.target.value),
         placeholder:
-          searchBy === 'marcaLower' ? 'Buscar por marca...' : searchBy === 'modeloLower' ? 'Buscar por modelo...' : 'Buscar por nombre...',
+          searchBy === 'marcaLower'
+            ? 'Buscar por marca...'
+            : searchBy === 'modeloLower'
+            ? 'Buscar por modelo...'
+            : searchBy === 'codigoLower'
+            ? 'Buscar por código...'
+            : 'Buscar por nombre...',
       }}
       footer={
         <TablePager

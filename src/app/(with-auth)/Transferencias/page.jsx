@@ -43,8 +43,8 @@ export default function Page() {
   const [searchDebounced, setSearchDebounced] = useState('')
   const [results, setResults] = useState([])
 
-  const [items, setItems] = useState([]) // [{ productoId, marca, modelo, nombre, talla, cantidad }]
-  const [addDialog, setAddDialog] = useState(null) // { producto, tallas, tallaSel, cantidadSel, max }
+  const [items, setItems] = useState([]) // [{ productoId, marca, modelo, nombre, talla, tallaRaw, cantidad }]
+  const [addDialog, setAddDialog] = useState(null) // { producto, tallas, tallaKeySel, cantidadSel, max }
   const [transferenciasDB, setTransferenciasDB] = useState(undefined)
 
   useEffect(() => {
@@ -133,16 +133,25 @@ export default function Page() {
     try {
       setModal('Cargando')
       const raw = (await getValue(`inventario/${desdeSucursalId}/${productoId}/tallas`)) || {}
-      const tallas = Object.entries(raw)
-        .map(([t, q]) => ({ talla: String(t), stock: Number(q || 0) }))
-        .filter((x) => x.talla && Number.isFinite(x.stock) && x.stock > 0)
-        .sort((a, b) => a.talla.localeCompare(b.talla))
+
+      // Normaliza tallas para UI (label) pero mantiene la llave real (key) para descontar/incrementar sin errores por espacios.
+      const byLabel = {}
+      for (const [t, q] of Object.entries(raw)) {
+        const key = String(t ?? '')
+        const label = key.trim()
+        const stock = Number(q || 0)
+        if (!label || !Number.isFinite(stock) || stock <= 0) continue
+        const prev = byLabel[label]
+        if (!prev || stock > prev.stock) byLabel[label] = { key, label, stock }
+      }
+
+      const tallas = Object.values(byLabel).sort((a, b) => String(a.label).localeCompare(String(b.label), undefined, { numeric: true }))
 
       setModal('')
       setAddDialog({
         producto,
         tallas,
-        tallaSel: tallas[0]?.talla || '',
+        tallaKeySel: tallas[0]?.key || '',
         cantidadSel: 1,
         max: tallas[0]?.stock || 0,
       })
@@ -156,11 +165,11 @@ export default function Page() {
     const d = addDialog
     if (!d?.producto?.__key) return
     const productoId = d.producto.__key
-    const talla = String(d.tallaSel || '').trim()
+    const tallaKey = String(d.tallaKeySel || '')
     const cantidad = Number(d.cantidadSel || 0)
-    if (!talla || !Number.isFinite(cantidad) || cantidad <= 0) return
+    if (!tallaKey.trim() || !Number.isFinite(cantidad) || cantidad <= 0) return
 
-    const match = d.tallas.find((x) => x.talla === talla)
+    const match = d.tallas.find((x) => x.key === tallaKey)
     const max = match?.stock || 0
     if (cantidad > max) return setUserSuccess?.('stock_insuficiente')
 
@@ -171,7 +180,8 @@ export default function Page() {
         marca: d.producto.marca,
         modelo: d.producto.modelo,
         nombre: d.producto.nombre,
-        talla,
+        talla: match?.label || String(tallaKey).trim(),
+        tallaRaw: tallaKey,
         cantidad,
       },
     ])
@@ -494,17 +504,17 @@ export default function Page() {
               <div className="text-[12px] font-semibold text-muted">Talla</div>
               <select
                 className={`${inputClass()} mt-2`}
-                value={addDialog.tallaSel}
+                value={addDialog.tallaKeySel}
                 onChange={(e) => {
-                  const talla = e.target.value
-                  const match = addDialog.tallas.find((x) => x.talla === talla)
-                  setAddDialog((prev) => ({ ...prev, tallaSel: talla, max: match?.stock || 0, cantidadSel: 1 }))
+                  const tallaKey = e.target.value
+                  const match = addDialog.tallas.find((x) => x.key === tallaKey)
+                  setAddDialog((prev) => ({ ...prev, tallaKeySel: tallaKey, max: match?.stock || 0, cantidadSel: 1 }))
                 }}
               >
                 {addDialog.tallas.length === 0 ? <option value="">Sin stock</option> : null}
                 {addDialog.tallas.map((t) => (
-                  <option key={t.talla} value={t.talla}>
-                    {t.talla} (stock {t.stock})
+                  <option key={t.key} value={t.key}>
+                    {t.label} (stock {t.stock})
                   </option>
                 ))}
               </select>

@@ -21,6 +21,7 @@ function buildProducto(input) {
   const modelo = String(input?.modelo ?? '').trim()
   const nombre = String(input?.nombre ?? '').trim()
   const precio = asNumber(input?.precio, 0)
+  const codigo = String(input?.codigo ?? '').trim()
   const urlImagen = input?.urlImagen ?? null
   const activo = input?.activo !== false
   const now = Date.now()
@@ -32,9 +33,11 @@ function buildProducto(input) {
     precio,
     urlImagen,
     activo,
+    codigo,
     marcaLower: lower(marca),
     modeloLower: lower(modelo),
     nombreLower: lower(nombre),
+    codigoLower: lower(codigo),
     creadoEn: input?.creadoEn ?? now,
     actualizadoEn: now,
   }
@@ -312,7 +315,7 @@ function groupTransferenciaItems(items) {
   const grouped = {}
   for (const it of items || []) {
     const productoId = String(it?.productoId || '').trim()
-    const tallaRaw = String(it?.talla ?? '')
+    const tallaRaw = String(it?.tallaRaw ?? it?.talla ?? '')
     const talla = tallaRaw
     const cantidad = asNumber(it?.cantidad, 0)
     if (!productoId || !tallaRaw.trim() || cantidad <= 0) continue
