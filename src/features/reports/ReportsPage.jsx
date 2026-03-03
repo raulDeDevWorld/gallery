@@ -348,6 +348,48 @@ export default function ReportsPage() {
       const workbook = XLSX.utils.book_new()
       const summarySheet = XLSX.utils.aoa_to_sheet(summarySheetData)
       const detailSheet = XLSX.utils.aoa_to_sheet([detailHeaders, ...detailRowsData])
+      summarySheet['!merges'] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 1 } }]
+      const styleTitle = {
+        font: { name: 'Calibri', sz: 14, bold: true, color: { rgb: '1B2430' } },
+        alignment: { horizontal: 'left' },
+      }
+      const styleHeader = {
+        font: { name: 'Calibri', sz: 11, bold: true, color: { rgb: 'FFFFFF' } },
+        fill: {
+          patternType: 'solid',
+          fgColor: { rgb: '1B2430' },
+        },
+        alignment: { horizontal: 'center', vertical: 'center' },
+      }
+      const styleKey = {
+        font: { name: 'Calibri', sz: 11, bold: true, color: { rgb: '1B2430' } },
+        alignment: { horizontal: 'left' },
+      }
+      summarySheet['A1'].s = styleTitle
+      summarySheet['A3'].s = styleKey
+      summarySheet['B3'].s = { font: styleKey.font, alignment: { horizontal: 'left' } }
+      for (let row = 4; row < 4 + statsOrder.length; row += 1) {
+        const cellKey = summarySheet[`A${row}`]
+        const cellVal = summarySheet[`B${row}`]
+        if (cellKey) cellKey.s = styleKey
+        if (cellVal) cellVal.s = { font: { name: 'Calibri', sz: 11 }, alignment: { horizontal: 'right' } }
+      }
+      detailHeaders.forEach((_, idx) => {
+        const cellRef = `${String.fromCharCode(65 + idx)}1`
+        detailSheet[cellRef] = {
+          v: detailHeaders[idx],
+          t: 's',
+          s: styleHeader,
+        }
+      })
+      detailSheet['!cols'] = [
+        { wch: 22 },
+        { wch: 20 },
+        { wch: 18 },
+        { wch: 40 },
+        { wch: 10 },
+        { wch: 12 },
+      ]
       XLSX.utils.book_append_sheet(workbook, summarySheet, 'Resumen')
       XLSX.utils.book_append_sheet(workbook, detailSheet, 'Detalle ventas')
 

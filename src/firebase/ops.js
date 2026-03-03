@@ -59,6 +59,30 @@ export async function guardarProducto({ productoId, producto, marcaLowerAnterior
   return { productoId: id, producto: data }
 }
 
+export async function eliminarProducto({ productoId }) {
+  const id = String(productoId || '').trim()
+  if (!id) {
+    const err = new Error('productoId_required')
+    err.code = 'productoId_required'
+    throw err
+  }
+  const producto = await getValue(`productos/${id}`)
+  if (!producto) {
+    const err = new Error('producto_no_existe')
+    err.code = 'producto_no_existe'
+    throw err
+  }
+  const marcaLower = producto?.marcaLower
+  const paths = {
+    [`productos/${id}`]: null,
+  }
+  if (marcaLower) {
+    paths[`productosPorMarca/${marcaLower}/${id}`] = null
+  }
+  await update(ref(db), paths)
+  return { ok: true, productoId: id }
+}
+
 export async function ajustarInventarioProductoSucursal({ sucursalId, productoId, tallas, usuarioId, nota }) {
   const current = (await getValue(`inventario/${sucursalId}/${productoId}/tallas`)) || {}
   const next = tallas && typeof tallas === 'object' ? tallas : {}
