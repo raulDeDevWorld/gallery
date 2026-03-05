@@ -144,7 +144,7 @@ export default function Page() {
     stockCacheRef.current = stockCache
   }, [stockCache])
 
-  const [cart, setCart] = useState({}) // { [key]: { productoId, talla, cantidad, precioUnitario, marca, modelo, nombre, maxStock } }
+  const [cart, setCart] = useState({}) // { [key]: { productoId, talla, cantidad, precioUnitario, precioRef, marca, modelo, nombre, maxStock } }
 
   const [drawer, setDrawer] = useState(null) // { producto, talla, stockBySucursal, sucursalSel, cantidadSel, max }
   const confirmingRef = useRef(false)
@@ -197,13 +197,16 @@ export default function Page() {
     return () => clearTimeout(t)
   }, [search])
 
-  const searchByLabel = searchBy === 'marcaLower' ? 'marca' : searchBy === 'modeloLower' ? 'modelo' : 'nombre'
+  const searchByLabel =
+    searchBy === 'marcaLower' ? 'marca' : searchBy === 'modeloLower' ? 'modelo' : searchBy === 'codigoLower' ? 'codigo' : 'nombre'
   const searchPlaceholder =
     searchBy === 'marcaLower'
       ? 'Buscar por marca...'
       : searchBy === 'modeloLower'
         ? 'Buscar por modelo...'
-        : 'Buscar por nombre...'
+        : searchBy === 'codigoLower'
+          ? 'Buscar por codigo...'
+          : 'Buscar por nombre...'
 
   const searchLower = lower(searchDebounced).trim()
 
@@ -294,6 +297,43 @@ export default function Page() {
     return asNumber(cart?.[cartKey(productoId, talla)]?.cantidad, 0)
   }
 
+  function setPrecioUnitarioItem(productoId, talla, nextPrice) {
+    const pid = safeId(productoId)
+    const t = String(talla ?? '')
+    if (!pid) return
+    if (!t.trim()) return
+    const price = Math.max(0, asNumber(nextPrice, 0))
+
+    setCart((prev) => {
+      const key = cartKey(pid, t)
+      const cur = prev?.[key]
+      if (!cur) return prev
+      const before = asNumber(cur?.precioUnitario, 0)
+      if (before === price) return prev
+      return { ...(prev || {}), [key]: { ...cur, precioUnitario: price } }
+    })
+  }
+
+  function setPrecioUnitarioProducto(productoId, nextPrice) {
+    const pid = safeId(productoId)
+    if (!pid) return
+    const price = Math.max(0, asNumber(nextPrice, 0))
+
+    setCart((prev) => {
+      const current = prev || {}
+      let changed = false
+      const next = { ...current }
+      for (const [key, it] of Object.entries(current)) {
+        if (safeId(it?.productoId) !== pid) continue
+        const before = asNumber(it?.precioUnitario, 0)
+        if (before === price) continue
+        next[key] = { ...(it || {}), precioUnitario: price }
+        changed = true
+      }
+      return changed ? next : prev
+    })
+  }
+
   function addOne(producto, talla, stock, tallaRaw) {
     const pid = safeId(producto?.__key)
     const t = String(talla ?? '')
@@ -307,13 +347,18 @@ export default function Page() {
       const cur = prev?.[key]
       const nextQty = asNumber(cur?.cantidad, 0) + 1
       if (nextQty > max) return prev
+
+      const precioRef = asNumber(cur?.precioRef ?? producto?.precio, 0)
+      const precioUnitario = asNumber(cur?.precioUnitario ?? precioRef, 0)
+
       return {
         ...(prev || {}),
         [key]: {
           productoId: pid,
           talla: t,
           cantidad: nextQty,
-          precioUnitario: asNumber(producto?.precio ?? cur?.precioUnitario, 0),
+          precioUnitario,
+          precioRef,
           marca: producto?.marca ?? cur?.marca,
           modelo: producto?.modelo ?? cur?.modelo,
           nombre: producto?.nombre ?? cur?.nombre,
@@ -807,8 +852,38 @@ export default function Page() {
                         {it.marca} {it.modelo} - T{String(it.talla).trim()}
                       </div>
                       <div className="truncate text-[12px] text-muted">{it.nombre}</div>
-                      <div className="mt-1 text-[12px] text-muted">
-                        {money(it.precioUnitario)} - Stock max: {asNumber(it.maxStock, 0) || '-'}
+                      <div className="mt-2 flex flex-wrap items-center gap-2 text-[12px] text-muted">
+                        <span className="font-semibold text-text">Precio unit.</span>
+                        <input
+                          type="number"
+                          inputMode="numeric"
+                          min="0"
+                          step="1"
+                          className="h-9 w-28 rounded-2xl bg-surface-2/70 px-3 text-[12px] font-semibold text-text ring-1 ring-border/20 shadow-sm outline-none focus:ring-2 focus:ring-accent/25"
+                          value={String(asNumber(it.precioUnitario, 0))}
+                          onChange={(e) => setPrecioUnitarioItem(it.productoId, it.talla, e.target.value)}
+                        />
+                        <button
+                          type="button"
+                          className="h-9 rounded-2xl bg-surface-2/70 px-3 text-[12px] font-semibold text-muted ring-1 ring-border/20 hover:bg-surface-2/90 hover:text-text"
+                          onClick={() => setPrecioUnitarioProducto(it.productoId, asNumber(it.precioUnitario, 0))}
+                          title="Aplicar este precio a todas las tallas del mismo producto"
+                        >
+                          Todas
+                        </button>
+                        {it.precioRef != null && asNumber(it.precioUnitario, 0) !== asNumber(it.precioRef, 0) ? (
+                          <button
+                            type="button"
+                            className="h-9 rounded-2xl bg-surface-2/70 px-3 text-[12px] font-semibold text-muted ring-1 ring-border/20 hover:bg-surface-2/90 hover:text-text"
+                            onClick={() => setPrecioUnitarioItem(it.productoId, it.talla, asNumber(it.precioRef, 0))}
+                            title="Volver al precio referencial"
+                          >
+                            Ref {money(it.precioRef)}
+                          </button>
+                        ) : (
+                          <span className="text-[11px] text-muted">Ref {money(it.precioRef)}</span>
+                        )}
+                        <span className="ml-auto">Stock max: {asNumber(it.maxStock, 0) || '-'}</span>
                       </div>
                     </div>
                     <div className="text-right">
@@ -884,8 +959,38 @@ export default function Page() {
                       {it.marca} {it.modelo} - T{String(it.talla).trim()}
                     </div>
                     <div className="truncate text-[12px] text-muted">{it.nombre}</div>
-                    <div className="mt-1 text-[12px] text-muted">
-                      {money(it.precioUnitario)} - Stock max: {asNumber(it.maxStock, 0) || '-'}
+                    <div className="mt-2 flex flex-wrap items-center gap-2 text-[12px] text-muted">
+                      <span className="font-semibold text-text">Precio unit.</span>
+                      <input
+                        type="number"
+                        inputMode="numeric"
+                        min="0"
+                        step="1"
+                        className="h-9 w-28 rounded-2xl bg-surface px-3 text-[12px] font-semibold text-text ring-1 ring-border/20 shadow-sm outline-none focus:ring-2 focus:ring-accent/25"
+                        value={String(asNumber(it.precioUnitario, 0))}
+                        onChange={(e) => setPrecioUnitarioItem(it.productoId, it.talla, e.target.value)}
+                      />
+                      <button
+                        type="button"
+                        className="h-9 rounded-2xl bg-surface px-3 text-[12px] font-semibold text-muted ring-1 ring-border/20 hover:bg-surface/95 hover:text-text"
+                        onClick={() => setPrecioUnitarioProducto(it.productoId, asNumber(it.precioUnitario, 0))}
+                        title="Aplicar este precio a todas las tallas del mismo producto"
+                      >
+                        Todas
+                      </button>
+                      {it.precioRef != null && asNumber(it.precioUnitario, 0) !== asNumber(it.precioRef, 0) ? (
+                        <button
+                          type="button"
+                          className="h-9 rounded-2xl bg-surface px-3 text-[12px] font-semibold text-muted ring-1 ring-border/20 hover:bg-surface/95 hover:text-text"
+                          onClick={() => setPrecioUnitarioItem(it.productoId, it.talla, asNumber(it.precioRef, 0))}
+                          title="Volver al precio referencial"
+                        >
+                          Ref {money(it.precioRef)}
+                        </button>
+                      ) : (
+                        <span className="text-[11px] text-muted">Ref {money(it.precioRef)}</span>
+                      )}
+                      <span className="ml-auto">Stock max: {asNumber(it.maxStock, 0) || '-'}</span>
                     </div>
                   </div>
                   <div className="text-right">

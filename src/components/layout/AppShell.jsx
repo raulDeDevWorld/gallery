@@ -1,6 +1,5 @@
 'use client'
 import { useUser } from '@/context'
-import { writeUserData, readUserData } from '@/firebase/database'
 import LoaderWithLogo from '@/components/LoaderWithLogo'
 
 import { useEffect, useRef, useState } from 'react'
@@ -17,7 +16,7 @@ import AppearanceMenu from '@/components/AppearanceMenu'
 import { ROLES, canonicalRol, isAdmin, isPersonal, rolLabel } from '@/lib/roles'
 
 function AppShell({ children }) { 
-  const { user, userDB, setUserCart, setUserSuccess, businessData, setUserProduct, setRecetaDB, whatsapp, setWhatsapp, nav, setNav, modal, setModal, cart, introClientVideo, setIntroClientVideo, pendienteDB, setPendienteDB, productDB, videoClientRef, webScann, setWebScann, setTienda, setBusinessData, perfil, setPerfil } = useUser() 
+  const { user, userDB, setUserCart, setUserSuccess, businessData, setUserProduct, setRecetaDB, whatsapp, setWhatsapp, nav, setNav, modal, setModal, cart, introClientVideo, setIntroClientVideo, pendienteDB, setPendienteDB, productDB, videoClientRef, webScann, setWebScann, setTienda, setBusinessData } = useUser() 
   const router = useRouter() 
   const pathname = usePathname() 
   const path = useReactPath(); 
@@ -42,7 +41,6 @@ function AppShell({ children }) {
       '/Transferencias': 'Transferencias',
       '/Tracking': 'Tracking',
       '/Reportes': 'Reporte histórico',
-      '/DataApp': 'Configuración',
       '/Personal': 'Personal',
       '/Politicas': 'Políticas',
     }
@@ -133,34 +131,9 @@ function AppShell({ children }) {
   useEffect(() => {
     setWhatsapp(false)
   }, [pathname, setWhatsapp])
- 
-  useEffect(() => { 
-    if (!user) return 
- 
-    const unsubs = [] 
- 
-    // Nota: leer todo `usuarios` suele estar restringido por reglas (solo admin). Cargarlo globalmente
-    // genera PERMISSION_DENIED y no es necesario para arrancar la app.
-    if (perfil === undefined) unsubs.push(readUserData('perfil', setPerfil, undefined, (err) => setUserSuccess(err?.code || err?.message))) 
- 
-    return () => { 
-      for (const unsub of unsubs) { 
-        if (typeof unsub === 'function') unsub() 
-      } 
-    } 
-  }, [user, perfil, setPerfil, setUserSuccess]) 
- 
-  useEffect(() => { 
-    if (!user) return 
-    if (perfil !== null) return 
-    if (pathname === '/DataApp') return 
-    if (userDB === undefined) return
-    if (userDB === null || !registroCompleto(userDB)) return
-    router.replace('/DataApp') 
-  }, [user, userDB, perfil, pathname, router]) 
- 
-  const showApp = user && perfil !== undefined && (perfil !== null || pathname === '/DataApp') 
-  const showPerfilRequired = user && perfil === null && pathname !== '/DataApp' 
+
+  // DataApp (perfil del negocio) ya no se usa. La app arranca con auth + usuarios/{uid}.
+  const showApp = Boolean(user) && userDB !== undefined
   const rolCanon = canonicalRol(userDB?.rol, ROLES.cliente)
   const canUseDashboard = isAdmin(userDB) || isPersonal(userDB)
   const shouldBlockCliente = showApp && userDB !== undefined && userDB !== null && registroCompleto(userDB) && !canUseDashboard
@@ -226,13 +199,10 @@ function AppShell({ children }) {
           {modal == 'Exit' && <Modal funcion={signOutConfirm}>
             Estas seguro de salir...? <br /> {Object.keys(cart).length > 0 && 'Tus compras no han sido efectuadas'}
           </Modal>}
-          {modal == 'VerificaM' && <Modal funcion={() => { router.push('/DataApp'); setModal('') }}>
-            Completa tu perfil para hacer tu primera receta.
-          </Modal>}
           <aside 
             className={`app-sidebar fixed top-0 left-0 h-screen w-[88vw] max-w-[320px] sm:w-[288px] py-4 z-50 overflow-y-auto bg-sidebar-bg/80 text-sidebar-text backdrop-blur shadow-2xl shadow-black/20 transition-all ${isDesktop ? (sidebarCollapsed ? '-translate-x-full' : 'translate-x-0') : (nav ? 'translate-x-0' : '-translate-x-full')} lg:w-[288px]`} 
           > 
-            {userDB && userDB !== undefined && perfil !== undefined && <Navbar rol={userDB.rol} />} 
+            {userDB && userDB !== undefined && <Navbar rol={userDB.rol} />} 
           </aside> 
 
            {nav && <div className='fixed inset-x-0 top-[64px] bottom-0 bg-black/40 z-40 lg:hidden' onClick={() => setNav(false)}></div>}
@@ -293,7 +263,7 @@ function AppShell({ children }) {
           
             </div>
 
-            {/* {userDB && userDB !== undefined && perfil !== undefined && <div className="app-bottom-nav fixed bottom-0 z-30 w-full h-16 bg-nav-bg/80 text-nav-text backdrop-blur shadow-sm shadow-black/10 ring-1 ring-sidebar-border/10 lg:hidden">
+            {/* {userDB && userDB !== undefined && <div className="app-bottom-nav fixed bottom-0 z-30 w-full h-16 bg-nav-bg/80 text-nav-text backdrop-blur shadow-sm shadow-black/10 ring-1 ring-sidebar-border/10 lg:hidden">
              
               <BottomNavigation rol={userDB.rol} />
             </div>} */}
@@ -301,35 +271,7 @@ function AppShell({ children }) {
           </main>
         </div>
 
-        : showPerfilRequired
-          ? <div className="min-h-screen w-screen flex items-center justify-center bg-bg px-6 text-center">
-            <div className="w-full max-w-[560px] rounded-3xl border border-border bg-surface shadow-xl p-6">
-              <div className="flex flex-col items-center">
-                <img src="/logo.png" alt="Logo" className="h-12" />
-                <h2 className="mt-4 text-[20px] font-semibold text-text">Falta configuración</h2>
-                <p className="mt-2 text-[14px] text-muted">
-                  No se pudo cargar el perfil del negocio (`perfil` en Realtime Database). Completa los datos empresariales para continuar.
-                </p>
-                <div className="mt-6 flex flex-col sm:flex-row gap-3 justify-center w-full">
-                  <button
-                    type="button"
-                    className="w-full sm:w-auto px-4 py-2.5 rounded-xl bg-accent text-black font-semibold hover:bg-accent/90 focus:outline-none focus:ring-2 focus:ring-accent/40"
-                    onClick={() => router.replace('/DataApp')}
-                  >
-                    Ir a Datos empresariales
-                  </button>
-                  <button
-                    type="button"
-                    className="w-full sm:w-auto px-4 py-2.5 rounded-xl border border-border bg-surface hover:bg-surface-2 text-text transition-colors"
-                    onClick={signOutConfirm}
-                  >
-                    Cerrar sesión
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-          : <LoaderWithLogo></LoaderWithLogo> 
+        : <LoaderWithLogo></LoaderWithLogo> 
       } 
 
     </div>

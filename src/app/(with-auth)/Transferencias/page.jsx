@@ -421,7 +421,7 @@ export default function Page() {
                     <th className="px-3 py-3">Items</th>
                     <th className="px-3 py-3">Creado</th>
                     <th className="px-3 py-3">Estado</th>
-                    <th className="px-3 py-3 text-center">AcciÃ³n</th>
+                    <th className="px-3 py-3 text-center"> Accion</th>
                   </tr>
                 </THead>
                 <tbody>

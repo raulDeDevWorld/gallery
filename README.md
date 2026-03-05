@@ -16,3 +16,7 @@ npm.cmd run dev
 ```
 
 Open `http://localhost:3000`.
+
+## Documentacion
+
+- Esquema de base de datos (Firebase RTDB): `docs/DB_SCHEMA.md`

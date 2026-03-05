@@ -1,7 +1,7 @@
 {
   "rules": {
-    ".read": false,
-    ".write": false,
+    ".read": "auth != null",
+    ".write": "auth != null",
 
     "usuarios": {
       ".read": "auth != null",
@@ -22,7 +22,7 @@
     "productos": {
       ".read": "auth != null",
       ".write": "auth != null && (root.child('usuarios').child(auth.uid).child('rol').val() === 'admin')",
-      ".indexOn": ["marcaLower", "modeloLower", "nombreLower"]
+      ".indexOn": ["marcaLower", "modeloLower", "nombreLower", "codigoLower"]
     },
 
     "productosPorMarca": {
@@ -61,6 +61,29 @@
       }
     },
 
+    "lotesCompra": {
+      ".read": "auth != null",
+      ".write": "auth != null"
+    },
+
+    "lotesCompraActivos": {
+      ".read": "auth != null",
+      ".write": "auth != null"
+    },
+
+    "compras": {
+      ".read": "auth != null",
+      ".write": "auth != null"
+    },
+
+    "comprasPorSucursal": {
+      ".read": "auth != null",
+      ".write": "auth != null",
+      "$sucursalId": {
+        ".indexOn": ["creadoEn"]
+      }
+    },
+
     "transferencias": {
       ".read": "auth != null",
       ".write": false,
@@ -78,10 +101,8 @@
         "transferidoEn": { ".validate": "newData.val() === null || newData.isNumber()" },
         "nota": { ".validate": "newData.val() === null || newData.isString()" },
         "items": {
-          ".validate": "newData.isObject()",
           "$productoId": {
             "tallas": {
-              ".validate": "newData.isObject()",
               "$talla": { ".validate": "newData.isNumber() && newData.val() > 0" }
             }
           }
@@ -106,6 +127,14 @@
       ".write": "auth != null",
       "$movimientoId": {
         "creadoEn": { ".validate": "newData.isNumber()" }
+      }
+    },
+
+    "movimientosPorSucursal": {
+      ".read": "auth != null",
+      ".write": "auth != null",
+      "$sucursalId": {
+        ".indexOn": ["creadoEn"]
       }
     },
 

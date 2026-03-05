@@ -10,7 +10,11 @@ import TablePager from '@/components/TablePager'
 import Drawer from '@/components/Drawer'
 import { useCursorPagination } from '@/hooks/useCursorPagination'
 import { getPagedData, getValue, readUserData } from '@/firebase/database'
-import { ajustarInventarioProductoSucursal } from '@/firebase/ops'
+import {
+  registrarCompraInventarioProductoSucursal,
+  registrarMermaInventarioProductoSucursal,
+  registrarRegularizacionInventarioProductoSucursal,
+} from '@/firebase/ops'
 import { lower } from '@/lib/string'
 import { isAdmin } from '@/lib/roles'
 import { useUser } from '@/context/'
@@ -39,7 +43,18 @@ export default function InventoryPage() {
 
   const [productoDetalle, setProductoDetalle] = useState(null) // producto (con __key)
   const [detalle, setDetalle] = useState(null) // { sucursalId, sucursalNombre, producto } (sucursal seleccionada)
-  const [tallasRows, setTallasRows] = useState([]) // [{ talla, cantidad }]
+  const [drawerMode, setDrawerMode] = useState('compra') // compra|merma|regularizacion
+  const [compraRows, setCompraRows] = useState([]) // [{ talla, cantidad, costoUnitario }]
+  const [compraProveedor, setCompraProveedor] = useState('')
+  const [compraNota, setCompraNota] = useState('')
+
+  const [mermaRows, setMermaRows] = useState([]) // [{ talla, cantidad }]
+  const [mermaMotivo, setMermaMotivo] = useState('roto')
+  const [mermaNota, setMermaNota] = useState('')
+
+  const [regRows, setRegRows] = useState([]) // [{ talla, cantidad, costoUnitario }], costo opcional
+  const [regMotivo, setRegMotivo] = useState('regularizacion')
+  const [regNota, setRegNota] = useState('')
   const [detalleLoading, setDetalleLoading] = useState(false)
   const [fullLoading, setFullLoading] = useState(false)
   const [fullInventario, setFullInventario] = useState({}) // { [sucursalId]: { [talla]: number } }
@@ -164,18 +179,20 @@ export default function InventoryPage() {
 
   async function openDetalle({ sucursalId, sucursalNombre, producto }) {
     setDetalle({ sucursalId, sucursalNombre, producto })
-    setTallasRows([{ talla: '', cantidad: '' }])
-    setDetalleLoading(true)
-    try {
-      const productoId = producto?.__key
-      const raw = (await getValue(`inventario/${sucursalId}/${productoId}/tallas`)) || {}
-      const rows = Object.entries(raw || {}).map(([k, v]) => ({ talla: String(k), cantidad: String(v) }))
-      setTallasRows(rows.length ? rows : [{ talla: '', cantidad: '' }])
-    } catch (err) {
-      setUserSuccess?.(err?.code || err?.message || 'repeat')
-    } finally {
-      setDetalleLoading(false)
-    }
+    setDrawerMode('compra')
+    setCompraRows([{ talla: '', cantidad: '', costoUnitario: '' }])
+    setCompraProveedor('')
+    setCompraNota('')
+
+    setMermaRows([{ talla: '', cantidad: '' }])
+    setMermaMotivo('roto')
+    setMermaNota('')
+
+    setRegRows([{ talla: '', cantidad: '', costoUnitario: '' }])
+    setRegMotivo('regularizacion')
+    setRegNota('')
+
+    setDetalleLoading(false)
   }
 
   const openProductoDrawer = useCallback(
@@ -199,7 +216,16 @@ export default function InventoryPage() {
   const closeProductoDrawer = useCallback(() => {
     setProductoDetalle(null)
     setDetalle(null)
-    setTallasRows([])
+    setDrawerMode('compra')
+    setCompraRows([])
+    setCompraProveedor('')
+    setCompraNota('')
+    setMermaRows([])
+    setMermaMotivo('roto')
+    setMermaNota('')
+    setRegRows([])
+    setRegMotivo('regularizacion')
+    setRegNota('')
     setDetalleLoading(false)
     setFullLoading(false)
     setFullInventario({})
@@ -282,7 +308,7 @@ export default function InventoryPage() {
     }
   }, [productoDetalle?.__key, sucursalesArr, setUserSuccess])
 
-  async function saveDetalle() {
+  async function saveCompra() {
     if (!admin) return setUserSuccess?.('No tienes permisos')
     if (!detalle?.producto?.__key) return setModal('')
     if (detalleLoading) return
@@ -290,32 +316,147 @@ export default function InventoryPage() {
     const productoId = detalle.producto.__key
     const sucursalId = detalle.sucursalId
 
-    const cleaned = {}
-    for (const r of tallasRows || []) {
+    const cleaned = []
+    for (const r of compraRows || []) {
       const talla = String(r?.talla || '').trim()
-      const qty = Number(String(r?.cantidad || '').trim())
+      const cantidad = Number(String(r?.cantidad || '').trim())
+      const costoUnitario = Number(String(r?.costoUnitario || '').trim())
       if (!talla) continue
-      if (!Number.isFinite(qty) || qty < 0) continue
-      if (qty === 0) continue
-      cleaned[talla] = qty
+      if (!Number.isFinite(cantidad) || cantidad <= 0) continue
+      if (!Number.isFinite(costoUnitario) || costoUnitario < 0) continue
+      cleaned.push({ talla, cantidad, costoUnitario })
     }
+
+    if (!cleaned.length) return setUserSuccess?.('Agrega al menos una talla con cantidad y costo unitario')
 
     try {
       setModal('Guardando')
-      await ajustarInventarioProductoSucursal({
+      await registrarCompraInventarioProductoSucursal({
         sucursalId,
         productoId,
-        tallas: cleaned,
         usuarioId: user?.uid ?? null,
-        nota: 'Ajuste desde Inventario',
+        proveedor: compraProveedor || null,
+        nota: compraNota || 'Compra desde Inventario',
+        productoSnapshot: { marca: detalle?.producto?.marca ?? null, modelo: detalle?.producto?.modelo ?? null, nombre: detalle?.producto?.nombre ?? null },
+        rows: cleaned,
       })
       setModal('')
       setUserSuccess?.('Se ha guardado correctamente')
-      setFullInventario((prev) => ({ ...(prev || {}), [sucursalId]: cleaned }))
-      setTotales((prev) => ({
-        ...(prev || {}),
-        [sucursalId]: { ...((prev || {})[sucursalId] || {}), [productoId]: Object.values(cleaned).reduce((acc, n) => acc + Number(n || 0), 0) },
-      }))
+
+      // Actualiza totales (sumando delta) y refresca el detalle.
+      const delta = cleaned.reduce((acc, it) => acc + Number(it.cantidad || 0), 0)
+      setTotales((prev) => {
+        const next = { ...(prev || {}) }
+        const curSucursal = { ...((next[sucursalId] || {}) || {}) }
+        curSucursal[productoId] = Number(curSucursal[productoId] || 0) + delta
+        next[sucursalId] = curSucursal
+        return next
+      })
+
+      await openDetalle({ sucursalId, sucursalNombre: detalle?.sucursalNombre, producto: detalle?.producto })
+    } catch (err) {
+      setModal('')
+      setUserSuccess?.(err?.code || err?.message || 'repeat')
+    }
+  }
+
+  async function saveMerma() {
+    if (!admin) return setUserSuccess?.('No tienes permisos')
+    if (!detalle?.producto?.__key) return setModal('')
+    if (detalleLoading) return
+
+    const productoId = detalle.producto.__key
+    const sucursalId = detalle.sucursalId
+
+    const cleaned = []
+    for (const r of mermaRows || []) {
+      const talla = String(r?.talla || '').trim()
+      const cantidad = Number(String(r?.cantidad || '').trim())
+      if (!talla) continue
+      if (!Number.isFinite(cantidad) || cantidad <= 0) continue
+      cleaned.push({ talla, cantidad })
+    }
+
+    if (!cleaned.length) return setUserSuccess?.('Agrega al menos una talla con cantidad')
+
+    try {
+      setModal('Guardando')
+      await registrarMermaInventarioProductoSucursal({
+        sucursalId,
+        productoId,
+        usuarioId: user?.uid ?? null,
+        motivo: mermaMotivo || null,
+        nota: mermaNota || 'Merma desde Inventario',
+        productoSnapshot: { marca: detalle?.producto?.marca ?? null, modelo: detalle?.producto?.modelo ?? null, nombre: detalle?.producto?.nombre ?? null },
+        rows: cleaned,
+      })
+      setModal('')
+      setUserSuccess?.('Se ha guardado correctamente')
+
+      const delta = cleaned.reduce((acc, it) => acc + Number(it.cantidad || 0), 0)
+      setTotales((prev) => {
+        const next = { ...(prev || {}) }
+        const curSucursal = { ...((next[sucursalId] || {}) || {}) }
+        curSucursal[productoId] = Math.max(0, Number(curSucursal[productoId] || 0) - delta)
+        next[sucursalId] = curSucursal
+        return next
+      })
+
+      await openDetalle({ sucursalId, sucursalNombre: detalle?.sucursalNombre, producto: detalle?.producto })
+    } catch (err) {
+      setModal('')
+      setUserSuccess?.(err?.code || err?.message || 'repeat')
+    }
+  }
+
+  async function saveRegularizacion() {
+    if (!admin) return setUserSuccess?.('No tienes permisos')
+    if (!detalle?.producto?.__key) return setModal('')
+    if (detalleLoading) return
+
+    const productoId = detalle.producto.__key
+    const sucursalId = detalle.sucursalId
+
+    const cleaned = []
+    for (const r of regRows || []) {
+      const talla = String(r?.talla || '').trim()
+      const cantidad = Number(String(r?.cantidad || '').trim())
+      const costoUnitarioRaw = String(r?.costoUnitario ?? '').trim()
+      const costoUnitario = costoUnitarioRaw === '' ? '' : Number(costoUnitarioRaw)
+
+      if (!talla) continue
+      if (!Number.isFinite(cantidad) || cantidad <= 0) continue
+      if (costoUnitario !== '' && (!Number.isFinite(costoUnitario) || costoUnitario < 0)) continue
+
+      cleaned.push({ talla, cantidad, costoUnitario })
+    }
+
+    if (!cleaned.length) return setUserSuccess?.('Agrega al menos una talla con cantidad')
+
+    try {
+      setModal('Guardando')
+      await registrarRegularizacionInventarioProductoSucursal({
+        sucursalId,
+        productoId,
+        usuarioId: user?.uid ?? null,
+        motivo: regMotivo || null,
+        nota: regNota || 'Regularización desde Inventario',
+        productoSnapshot: { marca: detalle?.producto?.marca ?? null, modelo: detalle?.producto?.modelo ?? null, nombre: detalle?.producto?.nombre ?? null },
+        rows: cleaned,
+      })
+      setModal('')
+      setUserSuccess?.('Se ha guardado correctamente')
+
+      const delta = cleaned.reduce((acc, it) => acc + Number(it.cantidad || 0), 0)
+      setTotales((prev) => {
+        const next = { ...(prev || {}) }
+        const curSucursal = { ...((next[sucursalId] || {}) || {}) }
+        curSucursal[productoId] = Number(curSucursal[productoId] || 0) + delta
+        next[sucursalId] = curSucursal
+        return next
+      })
+
+      await openDetalle({ sucursalId, sucursalNombre: detalle?.sucursalNombre, producto: detalle?.producto })
     } catch (err) {
       setModal('')
       setUserSuccess?.(err?.code || err?.message || 'repeat')
@@ -326,12 +467,46 @@ export default function InventoryPage() {
   const tableMinWidth = branchCount > 0 ? branchCount * 180 + 900 : 900
   const tableColSpan = 7 + branchCount
 
-  const detalleTotalTallas = useMemo(() => {
-    return (tallasRows || []).reduce((acc, r) => {
+  const compraUnidades = useMemo(() => {
+    return (compraRows || []).reduce((acc, r) => {
       const n = Number(String(r?.cantidad ?? '').trim())
       return acc + (Number.isFinite(n) ? n : 0)
     }, 0)
-  }, [tallasRows])
+  }, [compraRows])
+
+  const compraCostoTotal = useMemo(() => {
+    return (compraRows || []).reduce((acc, r) => {
+      const qty = Number(String(r?.cantidad ?? '').trim())
+      const costo = Number(String(r?.costoUnitario ?? '').trim())
+      if (!Number.isFinite(qty) || !Number.isFinite(costo)) return acc
+      return acc + qty * costo
+    }, 0)
+  }, [compraRows])
+
+  const mermaUnidades = useMemo(() => {
+    return (mermaRows || []).reduce((acc, r) => {
+      const n = Number(String(r?.cantidad ?? '').trim())
+      return acc + (Number.isFinite(n) ? n : 0)
+    }, 0)
+  }, [mermaRows])
+
+  const regUnidades = useMemo(() => {
+    return (regRows || []).reduce((acc, r) => {
+      const n = Number(String(r?.cantidad ?? '').trim())
+      return acc + (Number.isFinite(n) ? n : 0)
+    }, 0)
+  }, [regRows])
+
+  const regCostoTotal = useMemo(() => {
+    return (regRows || []).reduce((acc, r) => {
+      const qty = Number(String(r?.cantidad ?? '').trim())
+      const raw = String(r?.costoUnitario ?? '').trim()
+      const costo = raw === '' ? NaN : Number(raw)
+      if (!Number.isFinite(qty) || qty <= 0) return acc
+      if (!Number.isFinite(costo) || costo < 0) return acc
+      return acc + qty * costo
+    }, 0)
+  }, [regRows])
 
   const detalleTotalGeneral = useMemo(() => {
     if (!detalle?.producto?.__key) return null
@@ -344,6 +519,22 @@ export default function InventoryPage() {
     }
     return sum
   }, [detalle?.producto?.__key, sucursalesArr, totales])
+
+  const detalleTallasSucursal = useMemo(() => {
+    const sucursalId = detalle?.sucursalId
+    if (!sucursalId) return []
+    const tallas = fullInventario?.[sucursalId]
+    if (!tallas || typeof tallas !== 'object') return []
+
+    return Object.entries(tallas)
+      .map(([t, v]) => [String(t), Number(v)])
+      .filter(([, n]) => Number.isFinite(n) && n > 0)
+      .sort((a, b) => a[0].localeCompare(b[0], undefined, { numeric: true }))
+  }, [detalle?.sucursalId, fullInventario])
+
+  const detalleTotalSucursal = useMemo(() => {
+    return (detalleTallasSucursal || []).reduce((acc, [, n]) => acc + (Number(n) || 0), 0)
+  }, [detalleTallasSucursal])
 
   return (
     <DataPanel
@@ -407,9 +598,9 @@ export default function InventoryPage() {
                 type="button"
                 disabled={detalleLoading}
                 className="h-10 rounded-2xl bg-accent px-4 text-[12px] font-semibold text-black ring-1 ring-accent/30 hover:brightness-105 disabled:opacity-60"
-                onClick={saveDetalle}
+                onClick={drawerMode === 'compra' ? saveCompra : drawerMode === 'merma' ? saveMerma : saveRegularizacion}
               >
-                Guardar cambios
+                {drawerMode === 'compra' ? 'Registrar compra' : drawerMode === 'merma' ? 'Registrar merma' : 'Registrar regularización'}
               </button>
             </div>
           ) : (
@@ -442,7 +633,27 @@ export default function InventoryPage() {
                 <div className="text-[11px] font-semibold uppercase tracking-wide text-muted">Sucursal seleccionada</div>
                 <div className="mt-1 text-[14px] font-semibold text-text">{detalle?.sucursalNombre || '—'}</div>
                 <div className="mt-1 text-[12px] text-muted">
-                  Total (tallas): <span className="font-semibold text-text">{detalleTotalTallas}</span>
+                  <>
+                    Stock actual: <span className="font-semibold text-text">{Number(detalleTotalSucursal || 0)}</span>
+                  </>
+                  {drawerMode === 'compra' ? (
+                    <>
+                      <br />
+                      Unidades a ingresar: <span className="font-semibold text-text">{compraUnidades}</span> - Costo:{' '}
+                      <span className="font-semibold text-text">{Number(compraCostoTotal || 0)}</span>
+                    </>
+                  ) : drawerMode === 'merma' ? (
+                    <>
+                      <br />
+                      Unidades a descontar: <span className="font-semibold text-text">{mermaUnidades}</span>
+                    </>
+                  ) : (
+                    <>
+                      <br />
+                      Unidades a ingresar: <span className="font-semibold text-text">{regUnidades}</span> - Costo (si aplica):{' '}
+                      <span className="font-semibold text-text">{Number(regCostoTotal || 0)}</span>
+                    </>
+                  )}
                 </div>
               </div>
             </div>
@@ -450,8 +661,8 @@ export default function InventoryPage() {
             <div className="order-3 rounded-3xl bg-surface/30 p-4 ring-1 ring-border/15">
               <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                 <div>
-                  <div className="text-[13px] font-semibold text-text">Editar tallas por sucursal</div>
-                  <div className="text-[12px] text-muted">Selecciona una sucursal y ajusta cantidades por talla.</div>
+                  <div className="text-[13px] font-semibold text-text">Detalle de sucursal</div>
+                  <div className="text-[12px] text-muted">Ver stock por talla y registrar Compra/Merma/Regularizacion (auditables).</div>
                 </div>
                 <select
                   className="h-10 rounded-2xl bg-surface/60 px-3 text-[12px] text-text ring-1 ring-border/25 outline-none focus:ring-2 focus:ring-accent/25"
@@ -471,7 +682,56 @@ export default function InventoryPage() {
                 </select>
               </div>
 
-              <div className="mt-4 space-y-3">
+              <div className="mt-4 rounded-2xl bg-surface/40 p-4 ring-1 ring-border/15">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <div className="text-[12px] font-semibold text-text">Stock por talla (sucursal)</div>
+                      <div className="text-[12px] text-muted">Solo lectura.</div>
+                    </div>
+                    {fullLoading ? <div className="text-[12px] text-muted">Cargando...</div> : null}
+                  </div>
+
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {!fullLoading && !detalleTallasSucursal.length ? (
+                      <div className="text-[12px] text-muted">Sin stock registrado en esta sucursal.</div>
+                    ) : null}
+                    {(detalleTallasSucursal || []).map(([t, n]) => (
+                      <div
+                        key={`st-${t}`}
+                        className="inline-flex items-center gap-2 rounded-xl bg-surface/60 px-3 py-2 text-[12px] font-semibold ring-1 ring-border/15"
+                      >
+                        <span className="text-muted">T{t}</span>
+                        <span className="text-text">{Number(n || 0)}</span>
+                      </div>
+                    ))}
+                  </div>
+              </div>
+
+                  <div className="mt-4 inline-grid grid-cols-3 rounded-2xl bg-surface/60 p-1 ring-1 ring-border/15">
+                <button
+                  type="button"
+                  className={`rounded-2xl px-3 py-2 text-[12px] font-semibold transition ${drawerMode === 'compra' ? 'bg-surface text-text shadow-sm ring-1 ring-border/20' : 'text-muted hover:bg-surface/70 hover:text-text'}`}
+                  onClick={() => setDrawerMode('compra')}
+                >
+                  Compra (lotes)
+                </button>
+                <button
+                  type="button"
+                  className={`rounded-2xl px-3 py-2 text-[12px] font-semibold transition ${drawerMode === 'merma' ? 'bg-surface text-text shadow-sm ring-1 ring-border/20' : 'text-muted hover:bg-surface/70 hover:text-text'}`}
+                  onClick={() => setDrawerMode('merma')}
+                >
+                  Merma
+                </button>
+                <button
+                  type="button"
+                  className={`rounded-2xl px-3 py-2 text-[12px] font-semibold transition ${drawerMode === 'regularizacion' ? 'bg-surface text-text shadow-sm ring-1 ring-border/20' : 'text-muted hover:bg-surface/70 hover:text-text'}`}
+                  onClick={() => setDrawerMode('regularizacion')}
+                >
+                  Regularizacion
+                </button>
+                  </div>
+
+                  <div className="mt-4 space-y-3">
                 {detalleLoading ? (
                   <div className="inline-flex items-center gap-2 rounded-2xl bg-surface/60 px-3 py-2 text-[12px] font-semibold text-muted ring-1 ring-border/15">
                     <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -481,66 +741,280 @@ export default function InventoryPage() {
                   </div>
                 ) : null}
 
-                <div className="grid grid-cols-3 gap-2">
-                  <div className="text-[11px] font-semibold text-muted uppercase tracking-wide">Talla</div>
-                  <div className="text-[11px] font-semibold text-muted uppercase tracking-wide">Cantidad</div>
-                  <div />
+                {drawerMode === 'compra' ? (
+                  <>
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      <input
+                        className="h-10 rounded-2xl bg-surface/60 px-3 text-[12px] text-text ring-1 ring-border/25 outline-none focus:ring-2 focus:ring-accent/25"
+                        value={compraProveedor}
+                        onChange={(e) => setCompraProveedor(e.target.value)}
+                        placeholder="Proveedor (opcional)"
+                      />
+                      <input
+                        className="h-10 rounded-2xl bg-surface/60 px-3 text-[12px] text-text ring-1 ring-border/25 outline-none focus:ring-2 focus:ring-accent/25"
+                        value={compraNota}
+                        onChange={(e) => setCompraNota(e.target.value)}
+                        placeholder="Nota (opcional)"
+                      />
+                    </div>
 
-                  {(tallasRows || []).map((r, idx) => (
-                    <div key={`${idx}`} className="contents">
-                      <input
-                        disabled={!admin || detalleLoading}
-                        className="h-9 rounded-xl bg-surface/60 px-3 text-[12px] text-text ring-1 ring-border/15 outline-none focus:ring-2 focus:ring-accent/25 disabled:opacity-60"
-                        value={r.talla}
-                        onChange={(e) =>
-                          setTallasRows((prev) => {
-                            const next = [...prev]
-                            next[idx] = { ...(next[idx] || {}), talla: e.target.value }
-                            return next
-                          })
-                        }
-                        placeholder="40"
-                      />
-                      <input
-                        disabled={!admin || detalleLoading}
-                        className="h-9 rounded-xl bg-surface/60 px-3 text-[12px] text-text ring-1 ring-border/15 outline-none focus:ring-2 focus:ring-accent/25 disabled:opacity-60"
-                        value={r.cantidad}
-                        onChange={(e) =>
-                          setTallasRows((prev) => {
-                            const next = [...prev]
-                            next[idx] = { ...(next[idx] || {}), cantidad: e.target.value }
-                            return next
-                          })
-                        }
-                        inputMode="numeric"
-                        placeholder="0"
-                      />
+                    <div className="grid grid-cols-4 gap-2">
+                      <div className="text-[11px] font-semibold text-muted uppercase tracking-wide">Talla</div>
+                      <div className="text-[11px] font-semibold text-muted uppercase tracking-wide">Cantidad</div>
+                      <div className="text-[11px] font-semibold text-muted uppercase tracking-wide">Costo unit.</div>
+                      <div />
+
+                      {(compraRows || []).map((r, idx) => (
+                        <div key={`c-${idx}`} className="contents">
+                          <input
+                            disabled={!admin || detalleLoading}
+                            className="h-9 rounded-xl bg-surface/60 px-3 text-[12px] text-text ring-1 ring-border/15 outline-none focus:ring-2 focus:ring-accent/25 disabled:opacity-60"
+                            value={r.talla}
+                            onChange={(e) =>
+                              setCompraRows((prev) => {
+                                const next = [...prev]
+                                next[idx] = { ...(next[idx] || {}), talla: e.target.value }
+                                return next
+                              })
+                            }
+                            placeholder="40"
+                          />
+                          <input
+                            disabled={!admin || detalleLoading}
+                            className="h-9 rounded-xl bg-surface/60 px-3 text-[12px] text-text ring-1 ring-border/15 outline-none focus:ring-2 focus:ring-accent/25 disabled:opacity-60"
+                            value={r.cantidad}
+                            onChange={(e) =>
+                              setCompraRows((prev) => {
+                                const next = [...prev]
+                                next[idx] = { ...(next[idx] || {}), cantidad: e.target.value }
+                                return next
+                              })
+                            }
+                            inputMode="numeric"
+                            placeholder="0"
+                          />
+                          <input
+                            disabled={!admin || detalleLoading}
+                            className="h-9 rounded-xl bg-surface/60 px-3 text-[12px] text-text ring-1 ring-border/15 outline-none focus:ring-2 focus:ring-accent/25 disabled:opacity-60"
+                            value={r.costoUnitario}
+                            onChange={(e) =>
+                              setCompraRows((prev) => {
+                                const next = [...prev]
+                                next[idx] = { ...(next[idx] || {}), costoUnitario: e.target.value }
+                                return next
+                              })
+                            }
+                            inputMode="numeric"
+                            placeholder="0"
+                          />
+                          <button
+                            type="button"
+                            disabled={!admin || detalleLoading}
+                            className="h-9 rounded-xl bg-surface/50 px-3 text-[12px] font-semibold text-text ring-1 ring-border/15 hover:bg-surface disabled:opacity-50"
+                            onClick={() =>
+                              setCompraRows((prev) =>
+                                prev.filter((_, i) => i !== idx).length
+                                  ? prev.filter((_, i) => i !== idx)
+                                  : [{ talla: '', cantidad: '', costoUnitario: '' }]
+                              )
+                            }
+                          >
+                            Quitar
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+
+                    {admin ? (
                       <button
                         type="button"
-                        disabled={!admin || detalleLoading}
-                        className="h-9 rounded-xl bg-surface/50 px-3 text-[12px] font-semibold text-text ring-1 ring-border/15 hover:bg-surface disabled:opacity-50"
-                        onClick={() =>
-                          setTallasRows((prev) =>
-                            prev.filter((_, i) => i !== idx).length ? prev.filter((_, i) => i !== idx) : [{ talla: '', cantidad: '' }]
-                          )
-                        }
+                        disabled={detalleLoading}
+                        className="h-10 w-full rounded-2xl bg-surface/60 px-3 text-[12px] font-semibold text-text ring-1 ring-border/15 hover:bg-surface disabled:opacity-60"
+                        onClick={() => setCompraRows((prev) => [...(prev || []), { talla: '', cantidad: '', costoUnitario: '' }])}
                       >
-                        Quitar
+                        Agregar talla
                       </button>
+                    ) : null}
+                  </>
+                ) : drawerMode === 'merma' ? (
+                  <>
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      <select
+                        className="h-10 rounded-2xl bg-surface/60 px-3 text-[12px] text-text ring-1 ring-border/25 outline-none focus:ring-2 focus:ring-accent/25"
+                        value={mermaMotivo}
+                        onChange={(e) => setMermaMotivo(e.target.value)}
+                      >
+                        <option value="roto">Roto</option>
+                        <option value="perdido">Perdido</option>
+                        <option value="robo">Robo</option>
+                        <option value="error">Error conteo</option>
+                        <option value="otro">Otro</option>
+                      </select>
+                      <input
+                        className="h-10 rounded-2xl bg-surface/60 px-3 text-[12px] text-text ring-1 ring-border/25 outline-none focus:ring-2 focus:ring-accent/25"
+                        value={mermaNota}
+                        onChange={(e) => setMermaNota(e.target.value)}
+                        placeholder="Nota (opcional)"
+                      />
                     </div>
-                  ))}
-                </div>
 
-                {admin ? (
-                  <button
-                    type="button"
-                    disabled={detalleLoading}
-                    className="h-10 w-full rounded-2xl bg-surface/60 px-3 text-[12px] font-semibold text-text ring-1 ring-border/15 hover:bg-surface disabled:opacity-60"
-                    onClick={() => setTallasRows((prev) => [...(prev || []), { talla: '', cantidad: '' }])}
-                  >
-                    Agregar talla
-                  </button>
-                ) : null}
+                    <div className="grid grid-cols-3 gap-2">
+                      <div className="text-[11px] font-semibold text-muted uppercase tracking-wide">Talla</div>
+                      <div className="text-[11px] font-semibold text-muted uppercase tracking-wide">Cantidad</div>
+                      <div />
+
+                      {(mermaRows || []).map((r, idx) => (
+                        <div key={`m-${idx}`} className="contents">
+                          <input
+                            disabled={!admin || detalleLoading}
+                            className="h-9 rounded-xl bg-surface/60 px-3 text-[12px] text-text ring-1 ring-border/15 outline-none focus:ring-2 focus:ring-accent/25 disabled:opacity-60"
+                            value={r.talla}
+                            onChange={(e) =>
+                              setMermaRows((prev) => {
+                                const next = [...prev]
+                                next[idx] = { ...(next[idx] || {}), talla: e.target.value }
+                                return next
+                              })
+                            }
+                            placeholder="40"
+                          />
+                          <input
+                            disabled={!admin || detalleLoading}
+                            className="h-9 rounded-xl bg-surface/60 px-3 text-[12px] text-text ring-1 ring-border/15 outline-none focus:ring-2 focus:ring-accent/25 disabled:opacity-60"
+                            value={r.cantidad}
+                            onChange={(e) =>
+                              setMermaRows((prev) => {
+                                const next = [...prev]
+                                next[idx] = { ...(next[idx] || {}), cantidad: e.target.value }
+                                return next
+                              })
+                            }
+                            inputMode="numeric"
+                            placeholder="0"
+                          />
+                          <button
+                            type="button"
+                            disabled={!admin || detalleLoading}
+                            className="h-9 rounded-xl bg-surface/50 px-3 text-[12px] font-semibold text-text ring-1 ring-border/15 hover:bg-surface disabled:opacity-50"
+                            onClick={() =>
+                              setMermaRows((prev) =>
+                                prev.filter((_, i) => i !== idx).length ? prev.filter((_, i) => i !== idx) : [{ talla: '', cantidad: '' }]
+                              )
+                            }
+                          >
+                            Quitar
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+
+                    {admin ? (
+                      <button
+                        type="button"
+                        disabled={detalleLoading}
+                        className="h-10 w-full rounded-2xl bg-surface/60 px-3 text-[12px] font-semibold text-text ring-1 ring-border/15 hover:bg-surface disabled:opacity-60"
+                        onClick={() => setMermaRows((prev) => [...(prev || []), { talla: '', cantidad: '' }])}
+                      >
+                        Agregar talla
+                      </button>
+                    ) : null}
+                  </>
+                ) : (
+                  <>
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      <input
+                        className="h-10 rounded-2xl bg-surface/60 px-3 text-[12px] text-text ring-1 ring-border/25 outline-none focus:ring-2 focus:ring-accent/25"
+                        value={regMotivo}
+                        onChange={(e) => setRegMotivo(e.target.value)}
+                        placeholder="Motivo (ej: aparecio stock, correccion)"
+                      />
+                      <input
+                        className="h-10 rounded-2xl bg-surface/60 px-3 text-[12px] text-text ring-1 ring-border/25 outline-none focus:ring-2 focus:ring-accent/25"
+                        value={regNota}
+                        onChange={(e) => setRegNota(e.target.value)}
+                        placeholder="Nota (opcional)"
+                      />
+                    </div>
+
+                    <div className="grid grid-cols-4 gap-2">
+                      <div className="text-[11px] font-semibold text-muted uppercase tracking-wide">Talla</div>
+                      <div className="text-[11px] font-semibold text-muted uppercase tracking-wide">Cantidad</div>
+                      <div className="text-[11px] font-semibold text-muted uppercase tracking-wide">Costo (opcional)</div>
+                      <div />
+
+                      {(regRows || []).map((r, idx) => (
+                        <div key={`r-${idx}`} className="contents">
+                          <input
+                            disabled={!admin || detalleLoading}
+                            className="h-9 rounded-xl bg-surface/60 px-3 text-[12px] text-text ring-1 ring-border/15 outline-none focus:ring-2 focus:ring-accent/25 disabled:opacity-60"
+                            value={r.talla}
+                            onChange={(e) =>
+                              setRegRows((prev) => {
+                                const next = [...prev]
+                                next[idx] = { ...(next[idx] || {}), talla: e.target.value }
+                                return next
+                              })
+                            }
+                            placeholder="40"
+                          />
+                          <input
+                            disabled={!admin || detalleLoading}
+                            className="h-9 rounded-xl bg-surface/60 px-3 text-[12px] text-text ring-1 ring-border/15 outline-none focus:ring-2 focus:ring-accent/25 disabled:opacity-60"
+                            value={r.cantidad}
+                            onChange={(e) =>
+                              setRegRows((prev) => {
+                                const next = [...prev]
+                                next[idx] = { ...(next[idx] || {}), cantidad: e.target.value }
+                                return next
+                              })
+                            }
+                            inputMode="numeric"
+                            placeholder="0"
+                          />
+                          <input
+                            disabled={!admin || detalleLoading}
+                            className="h-9 rounded-xl bg-surface/60 px-3 text-[12px] text-text ring-1 ring-border/15 outline-none focus:ring-2 focus:ring-accent/25 disabled:opacity-60"
+                            value={r.costoUnitario}
+                            onChange={(e) =>
+                              setRegRows((prev) => {
+                                const next = [...prev]
+                                next[idx] = { ...(next[idx] || {}), costoUnitario: e.target.value }
+                                return next
+                              })
+                            }
+                            inputMode="numeric"
+                            placeholder="0"
+                          />
+                          <button
+                            type="button"
+                            disabled={!admin || detalleLoading}
+                            className="h-9 rounded-xl bg-surface/50 px-3 text-[12px] font-semibold text-text ring-1 ring-border/15 hover:bg-surface disabled:opacity-50"
+                            onClick={() =>
+                              setRegRows((prev) =>
+                                prev.filter((_, i) => i !== idx).length
+                                  ? prev.filter((_, i) => i !== idx)
+                                  : [{ talla: '', cantidad: '', costoUnitario: '' }]
+                              )
+                            }
+                          >
+                            Quitar
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+
+                    {admin ? (
+                      <button
+                        type="button"
+                        disabled={detalleLoading}
+                        className="h-10 w-full rounded-2xl bg-surface/60 px-3 text-[12px] font-semibold text-text ring-1 ring-border/15 hover:bg-surface disabled:opacity-60"
+                        onClick={() => setRegRows((prev) => [...(prev || []), { talla: '', cantidad: '', costoUnitario: '' }])}
+                      >
+                        Agregar talla
+                      </button>
+                    ) : null}
+                  </>
+                )}
               </div>
             </div>
 
