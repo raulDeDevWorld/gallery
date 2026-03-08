@@ -103,7 +103,7 @@ export default function Select({ arr, name, click, defaultValue, uuid }) {
         <div className="absolute w-full top-[-80px]">
           {success === 'Importand' ? (
             <Tolkipt>
-              Esta informaciÃ³n es importante,
+              Esta informacion es importante,
               <br /> por favor revisa que sea correcta.
             </Tolkipt>
           ) : null}

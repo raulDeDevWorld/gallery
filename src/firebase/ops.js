@@ -177,6 +177,49 @@ function buildLoteId(compraId, talla) {
   return `${safeKey(compraId)}_${safeKey(String(talla || '').trim())}`
 }
 
+function buildLoteMovimientoPath({ sucursalId, productoId, talla, loteId, traceId }) {
+  const sid = String(sucursalId || '').trim()
+  const pid = String(productoId || '').trim()
+  const t = String(talla || '').trim()
+  const lid = String(loteId || '').trim()
+  const tid = String(traceId || '').trim()
+  if (!sid || !pid || !t || !lid || !tid) return ''
+  return `movimientosPorLote/${sid}/${pid}/${t}/${lid}/${tid}`
+}
+
+function buildLoteMovimientoEntry({
+  kind,
+  operationType,
+  entityId,
+  movimientoId,
+  cantidad,
+  costoUnitario,
+  costoDesconocido,
+  creadoEn,
+  usuarioId,
+  extra = {},
+}) {
+  const parsedCosto = Number(costoUnitario)
+  return {
+    kind: String(kind || '').trim() || null,
+    operationType: String(operationType || '').trim() || null,
+    entityId: entityId ? String(entityId).trim() : null,
+    movimientoId: movimientoId ? String(movimientoId).trim() : null,
+    cantidad: asNumber(cantidad, 0),
+    costoUnitario: Number.isFinite(parsedCosto) && parsedCosto >= 0 ? parsedCosto : null,
+    costoDesconocido: costoDesconocido === true ? true : null,
+    creadoEn: asNumber(creadoEn, 0),
+    usuarioId: usuarioId ? String(usuarioId).trim() : null,
+    ...extra,
+  }
+}
+
+function appendLoteMovimiento(paths, { sucursalId, productoId, talla, loteId, traceId, entry }) {
+  const path = buildLoteMovimientoPath({ sucursalId, productoId, talla, loteId, traceId })
+  if (!path) return
+  paths[path] = entry
+}
+
 export async function registrarCompraInventarioProductoSucursal({
   sucursalId,
   productoId,
@@ -233,8 +276,10 @@ export async function registrarCompraInventarioProductoSucursal({
   const snapModelo = snap?.modelo != null ? String(snap.modelo) : null
   const snapNombre = snap?.nombre != null ? String(snap.nombre) : null
 
+  const movimientoId = `compra_${compraId}`
   const lotPaths = {}
   const activePaths = {}
+  const loteTracePaths = {}
   for (const it of cleaned) {
     const loteId = buildLoteId(compraId, it.talla)
     lotPaths[`lotesCompra/${sid}/${pid}/${it.talla}/${loteId}`] = {
@@ -244,11 +289,30 @@ export async function registrarCompraInventarioProductoSucursal({
       costoUnitario: asNumber(it.costoUnitario, 0),
       proveedor: proveedor ? String(proveedor).trim() : null,
       nota: nota ? String(nota).trim() : null,
+      sourceType: 'compra',
+      sourceId: compraId,
+      sourceMovimientoId: movimientoId,
     }
     activePaths[`lotesCompraActivos/${sid}/${pid}/${it.talla}/${loteId}`] = now
+    appendLoteMovimiento(loteTracePaths, {
+      sucursalId: sid,
+      productoId: pid,
+      talla: it.talla,
+      loteId,
+      traceId: `entrada_compra_${safeKey(compraId)}_${safeKey(it.talla)}`,
+      entry: buildLoteMovimientoEntry({
+        kind: 'entrada',
+        operationType: 'compra',
+        entityId: compraId,
+        movimientoId,
+        cantidad: it.cantidad,
+        costoUnitario: it.costoUnitario,
+        creadoEn: now,
+        usuarioId,
+      }),
+    })
   }
 
-  const movimientoId = `compra_${compraId}`
   const paths = {
     [`inventario/${sid}/${pid}/actualizadoEn`]: now,
     [`inventarioTotales/${sid}/${pid}/total`]: total,
@@ -293,10 +357,185 @@ export async function registrarCompraInventarioProductoSucursal({
     },
     ...lotPaths,
     ...activePaths,
+    ...loteTracePaths,
   }
 
   await update(ref(db), paths)
   return { ok: true, compraId }
+}
+
+export async function anularReposicionCompra({ sucursalId, compraId, usuarioId, nota }) {
+  const sidInput = String(sucursalId || '').trim()
+  const cid = String(compraId || '').trim()
+  if (!cid) {
+    const err = new Error('compraId_required')
+    err.code = 'compraId_required'
+    throw err
+  }
+
+  // Preferimos leer `compras/{compraId}` (fuente de verdad). Si no existe, fallback a la vista por sucursal.
+  const compra = (await getValue(`compras/${cid}`).catch(() => null)) || (sidInput ? await getValue(`comprasPorSucursal/${sidInput}/${cid}`).catch(() => null) : null)
+  if (!compra) {
+    const err = new Error('compra_no_existe')
+    err.code = 'compra_no_existe'
+    throw err
+  }
+
+  const sid = String(compra?.sucursalId || sidInput || '').trim()
+  if (!sid) {
+    const err = new Error('sucursalId_required')
+    err.code = 'sucursalId_required'
+    throw err
+  }
+
+  const estado = String(compra?.estado || '').trim()
+  if (estado === 'anulada') return { ok: true, alreadyAnulada: true }
+
+  const items = compra?.items && typeof compra.items === 'object' ? compra.items : null
+  if (!items) {
+    const err = new Error('compra_sin_items')
+    err.code = 'compra_sin_items'
+    throw err
+  }
+
+  // 1) Validar que todos los lotes de esta compra esten "nuevos" (sin consumo).
+  const movId = `compra_anulada_${safeKey(cid)}`
+  const loteDeletes = {}
+  const loteTracePaths = {}
+  const toDescontar = [] // [{ productoId, talla, cantidad }]
+  let unidades = 0
+  let costoTotal = 0
+
+  for (const [productoId, detail] of Object.entries(items)) {
+    const pid = String(productoId || '').trim()
+    if (!pid) continue
+
+    const tallas = detail?.tallas && typeof detail.tallas === 'object' ? detail.tallas : {}
+    for (const [tallaKey, data] of Object.entries(tallas)) {
+      const talla = String(tallaKey ?? '').trim()
+      const qty = asNumber(data?.cantidad, 0)
+      if (!talla || qty <= 0) continue
+
+      const loteId = buildLoteId(cid, talla)
+      const lotePath = `lotesCompra/${sid}/${pid}/${talla}/${loteId}`
+      const lote = await getValue(lotePath).catch(() => null)
+      if (!lote) {
+        const err = new Error('lote_no_existe')
+        err.code = 'lote_no_existe'
+        err.lotePath = lotePath
+        throw err
+      }
+
+      const inicial = asNumber(lote?.cantidadInicial, qty)
+      const disponible = asNumber(lote?.cantidadDisponible, NaN)
+      if (!Number.isFinite(disponible)) {
+        const err = new Error('lote_invalido')
+        err.code = 'lote_invalido'
+        err.lotePath = lotePath
+        throw err
+      }
+
+      // Si el lote se consumio aunque sea 1 unidad, no se permite anular reposicion.
+      if (disponible !== inicial) {
+        const err = new Error('compra_no_anulable_lote_consumido')
+        err.code = 'compra_no_anulable_lote_consumido'
+        err.loteId = loteId
+        err.talla = talla
+        err.productoId = pid
+        err.disponible = disponible
+        err.inicial = inicial
+        throw err
+      }
+
+      unidades += qty
+      costoTotal += qty * asNumber(lote?.costoUnitario, 0)
+      toDescontar.push({ productoId: pid, talla, cantidad: qty })
+
+      loteDeletes[lotePath] = null
+      loteDeletes[`lotesCompraActivos/${sid}/${pid}/${talla}/${loteId}`] = null
+      appendLoteMovimiento(loteTracePaths, {
+        sucursalId: sid,
+        productoId: pid,
+        talla,
+        loteId,
+        traceId: `reversion_compra_${safeKey(cid)}_${safeKey(talla)}`,
+        entry: buildLoteMovimientoEntry({
+          kind: 'reversion',
+          operationType: 'compra',
+          entityId: cid,
+          movimientoId: movId,
+          cantidad: qty,
+          costoUnitario: lote?.costoUnitario,
+          creadoEn: Date.now(),
+          usuarioId,
+          extra: { nota: nota ? String(nota).trim() : null },
+        }),
+      })
+    }
+  }
+
+  if (!toDescontar.length) {
+    const err = new Error('compra_sin_items')
+    err.code = 'compra_sin_items'
+    throw err
+  }
+
+  // 2) Descontar inventario (si falla, no tocamos lotes/compra).
+  const descontados = []
+  try {
+    for (const it of toDescontar) {
+      await descontarStockSucursal({ sucursalId: sid, productoId: it.productoId, talla: it.talla, cantidad: it.cantidad })
+      descontados.push(it)
+    }
+  } catch (err) {
+    // Si no se pudo descontar stock, abortamos (no borramos lotes ni marcamos compra anulada).
+    throw err
+  }
+
+  const now = Date.now()
+  const deltaItems = {}
+  for (const it of toDescontar) {
+    if (!deltaItems[it.productoId]) deltaItems[it.productoId] = { tallas: {} }
+    deltaItems[it.productoId].tallas[it.talla] = (deltaItems[it.productoId].tallas[it.talla] || 0) - asNumber(it.cantidad, 0)
+  }
+
+  // 3) Borrar lotes + marcar compra anulada + registrar movimiento (todo en 1 update).
+  const paths = {
+    ...loteDeletes,
+    ...loteTracePaths,
+    [`compras/${cid}/estado`]: 'anulada',
+    [`compras/${cid}/anuladoEn`]: now,
+    [`compras/${cid}/anuladoPorUsuarioId`]: usuarioId ?? null,
+    [`compras/${cid}/anuladoNota`]: nota ? String(nota).trim() : null,
+
+    [`comprasPorSucursal/${sid}/${cid}/estado`]: 'anulada',
+    [`comprasPorSucursal/${sid}/${cid}/anuladoEn`]: now,
+    [`comprasPorSucursal/${sid}/${cid}/anuladoPorUsuarioId`]: usuarioId ?? null,
+    [`comprasPorSucursal/${sid}/${cid}/anuladoNota`]: nota ? String(nota).trim() : null,
+
+    [`movimientosInventario/${movId}`]: {
+      tipo: 'compra_anulada',
+      sucursalId: sid,
+      compraId: cid,
+      usuarioId: usuarioId ?? null,
+      creadoEn: now,
+      unidades,
+      costoTotal: asNumber(costoTotal, 0),
+      nota: nota ? String(nota).trim() : null,
+      items: deltaItems,
+    },
+  }
+
+  try {
+    await update(ref(db), paths)
+    return { ok: true }
+  } catch (err) {
+    // Si fallamos al borrar lotes/marcar compra, devolvemos el stock.
+    for (const it of descontados) {
+      await incrementarStockSucursal({ sucursalId: sid, productoId: it.productoId, talla: it.talla, cantidad: it.cantidad }).catch(() => {})
+    }
+    throw err
+  }
 }
 
 function cleanQtyRows(rows) {
@@ -413,6 +652,34 @@ export async function registrarMermaInventarioProductoSucursal({
       tallas: Object.fromEntries(cleaned.map((it) => [it.talla, { cantidad: asNumber(it.cantidad, 0) }])),
     },
   }
+  const loteTracePaths = {}
+  for (const [talla, consumos] of Object.entries(consumoLotes || {})) {
+    const list = Array.isArray(consumos) ? consumos : []
+    for (const c of list) {
+      const loteId = String(c?.loteId || '').trim()
+      const cantidad = asNumber(c?.cantidad, 0)
+      if (!loteId || cantidad <= 0) continue
+      appendLoteMovimiento(loteTracePaths, {
+        sucursalId: sid,
+        productoId: pid,
+        talla,
+        loteId,
+        traceId: `salida_merma_${safeKey(movId)}_${safeKey(talla)}_${safeKey(loteId)}`,
+        entry: buildLoteMovimientoEntry({
+          kind: 'salida',
+          operationType: 'merma',
+          entityId: movId,
+          movimientoId: movId,
+          cantidad,
+          costoUnitario: c?.costoUnitario,
+          costoDesconocido: c?.costoDesconocido === true,
+          creadoEn: now,
+          usuarioId,
+          extra: { motivo: motivo ? String(motivo).trim() : null },
+        }),
+      })
+    }
+  }
 
   const paths = {
     [`movimientosInventario/${movId}`]: {
@@ -448,6 +715,7 @@ export async function registrarMermaInventarioProductoSucursal({
       nombre: snapNombre,
       items: itemsPos,
     },
+    ...loteTracePaths,
   }
 
   await update(ref(db), paths)
@@ -506,8 +774,10 @@ export async function registrarRegularizacionInventarioProductoSucursal({
   const snapModelo = snap?.modelo != null ? String(snap.modelo) : null
   const snapNombre = snap?.nombre != null ? String(snap.nombre) : null
 
+  const movId = `reg_${regId}`
   const lotPaths = {}
   const activePaths = {}
+  const loteTracePaths = {}
   const itemsPos = {
     [pid]: {
       tallas: Object.fromEntries(cleaned.map((it) => [it.talla, { cantidad: it.cantidad, costoUnitario: it.costoUnitario, costoDesconocido: it.costoDesconocido ? true : null }])),
@@ -524,11 +794,32 @@ export async function registrarRegularizacionInventarioProductoSucursal({
       tipo: 'regularizacion',
       motivo: motivo ? String(motivo).trim() : null,
       nota: nota ? String(nota).trim() : null,
+      sourceType: 'regularizacion',
+      sourceId: regId,
+      sourceMovimientoId: movId,
     }
     activePaths[`lotesCompraActivos/${sid}/${pid}/${it.talla}/${loteId}`] = now
+    appendLoteMovimiento(loteTracePaths, {
+      sucursalId: sid,
+      productoId: pid,
+      talla: it.talla,
+      loteId,
+      traceId: `entrada_regularizacion_${safeKey(regId)}_${safeKey(it.talla)}`,
+      entry: buildLoteMovimientoEntry({
+        kind: 'entrada',
+        operationType: 'regularizacion',
+        entityId: regId,
+        movimientoId: movId,
+        cantidad: it.cantidad,
+        costoUnitario: it.costoUnitario,
+        costoDesconocido: it.costoDesconocido ? true : null,
+        creadoEn: now,
+        usuarioId,
+        extra: { motivo: motivo ? String(motivo).trim() : null },
+      }),
+    })
   }
 
-  const movId = `reg_${regId}`
   const paths = {
     [`inventario/${sid}/${pid}/actualizadoEn`]: now,
     [`inventarioTotales/${sid}/${pid}/total`]: total,
@@ -572,6 +863,7 @@ export async function registrarRegularizacionInventarioProductoSucursal({
     },
     ...lotPaths,
     ...activePaths,
+    ...loteTracePaths,
   }
 
   await update(ref(db), paths)
@@ -697,6 +989,38 @@ async function incrementarReporteVentaDia({ sucursalId, ts, total, ventaId, cost
       cantidadVentas: curCount + 1,
       actualizadoEn: now,
       ventas: ventaId ? { ...ventas, [ventaId]: true } : ventas,
+    }
+  })
+}
+
+async function decrementarReporteVentaDia({ sucursalId, ts, total, ventaId, costoTotal = 0, margenBruto = 0 }) {
+  const dia = yyyymmdd(ts)
+  const reportRef = ref(db, `reportes/ventasPorSucursalDia/${sucursalId}/${dia}`)
+  const now = Date.now()
+
+  await runTransaction(reportRef, (current) => {
+    const cur = current && typeof current === 'object' ? current : {}
+    const ventas = cur.ventas && typeof cur.ventas === 'object' ? cur.ventas : {}
+
+    // Idempotencia: si la venta no estaba registrada, no restamos otra vez.
+    if (!ventaId || !ventas[ventaId]) return { ...cur, actualizadoEn: now }
+
+    const curTotal = asNumber(cur.total, 0)
+    const curCosto = asNumber(cur.costoTotal, 0)
+    const curMargen = asNumber(cur.margenBruto, 0)
+    const curCount = asNumber(cur.cantidadVentas, 0)
+
+    const nextVentas = { ...ventas }
+    delete nextVentas[ventaId]
+
+    return {
+      ...cur,
+      total: Math.max(0, curTotal - asNumber(total, 0)),
+      costoTotal: Math.max(0, curCosto - asNumber(costoTotal, 0)),
+      margenBruto: curMargen - asNumber(margenBruto, 0),
+      cantidadVentas: Math.max(0, curCount - 1),
+      actualizadoEn: now,
+      ventas: nextVentas,
     }
   })
 }
@@ -877,6 +1201,38 @@ export async function registrarVenta({ ventaId, sucursalId, usuarioId, items, to
     if (!movimientoItems[it.productoId]) movimientoItems[it.productoId] = { tallas: {} }
     movimientoItems[it.productoId].tallas[it.talla] = (movimientoItems[it.productoId].tallas[it.talla] || 0) - asNumber(it.cantidad, 0)
   }
+  const loteTracePaths = {}
+  const ventaItemsFinal = (await getValue(`ventas/${id}/items`).catch(() => null)) || grouped || {}
+  for (const [productoId, detail] of Object.entries(ventaItemsFinal || {})) {
+    const consumo = detail?.consumoLotes && typeof detail.consumoLotes === 'object' ? detail.consumoLotes : {}
+    for (const [talla, consumos] of Object.entries(consumo || {})) {
+      const list = Array.isArray(consumos) ? consumos : []
+      for (const c of list) {
+        const loteId = String(c?.loteId || '').trim()
+        const cantidad = asNumber(c?.cantidad, 0)
+        if (!loteId || cantidad <= 0) continue
+        appendLoteMovimiento(loteTracePaths, {
+          sucursalId,
+          productoId,
+          talla,
+          loteId,
+          traceId: `salida_venta_${safeKey(id)}_${safeKey(productoId)}_${safeKey(talla)}_${safeKey(loteId)}`,
+          entry: buildLoteMovimientoEntry({
+            kind: 'salida',
+            operationType: 'venta',
+            entityId: id,
+            movimientoId,
+            cantidad,
+            costoUnitario: c?.costoUnitario,
+            costoDesconocido: c?.costoDesconocido === true,
+            creadoEn: confirmadoEn,
+            usuarioId,
+            extra: { metodoPago: metodoPago ?? null },
+          }),
+        })
+      }
+    }
+  }
 
   // Lee la venta para obtener costo/margen persistidos (puede venir de un reintento con etapa stock_descontado).
   const ventaFinal = (await getValue(`ventas/${id}`).catch(() => null)) || venta || {}
@@ -902,6 +1258,7 @@ export async function registrarVenta({ ventaId, sucursalId, usuarioId, items, to
       referencia: { ventaId: id, transferenciaId: null, nota: null },
       items: movimientoItems,
     },
+    ...loteTracePaths,
     [`idempotencias/${lock.key}/estado`]: 'confirmada',
     [`idempotencias/${lock.key}/etapa`]: 'confirmada',
     [`idempotencias/${lock.key}/actualizadoEn`]: confirmadoEn,
@@ -917,6 +1274,278 @@ export async function registrarVenta({ ventaId, sucursalId, usuarioId, items, to
     ventaId: id,
   })
   return { ventaId: id }
+}
+
+async function ajustarCantidadDisponibleLote({ sucursalId, productoId, talla, loteId, delta, creadoEn }) {
+  const sid = String(sucursalId || '').trim()
+  const pid = String(productoId || '').trim()
+  const t = String(talla || '').trim()
+  const lid = String(loteId || '').trim()
+  const d = asNumber(delta, 0)
+  if (!sid || !pid || !t || !lid || !d) return { ok: false }
+
+  const cantidadRef = ref(db, `lotesCompra/${sid}/${pid}/${t}/${lid}/cantidadDisponible`)
+  let after = NaN
+  const res = await runTransaction(
+    cantidadRef,
+    (current) => {
+      const cur = asNumber(current, NaN)
+      if (!Number.isFinite(cur)) return
+      const next = cur + d
+      if (next < 0) return
+      after = next
+      return next
+    },
+    { applyLocally: false }
+  )
+
+  if (!res.committed) {
+    const err = new Error('no_commit_lote')
+    err.code = 'no_commit_lote'
+    err.path = `lotesCompra/${sid}/${pid}/${t}/${lid}/cantidadDisponible`
+    throw err
+  }
+
+  const activePath = `lotesCompraActivos/${sid}/${pid}/${t}/${lid}`
+  if (Number.isFinite(after) && after <= 0) {
+    await update(ref(db), { [activePath]: null }).catch(() => {})
+  } else if (d > 0) {
+    const ce = asNumber(creadoEn, 0)
+    if (ce > 0) await update(ref(db), { [activePath]: ce }).catch(() => {})
+  }
+
+  return { ok: true, after: Number.isFinite(after) ? after : asNumber(res.snapshot?.val?.(), 0) }
+}
+
+export async function anularVenta({ ventaId, sucursalId, usuarioId, motivo, nota, idempotencyKey }) {
+  const desiredId = String(ventaId || '').trim()
+  if (!desiredId) {
+    const err = new Error('ventaId_required')
+    err.code = 'ventaId_required'
+    throw err
+  }
+
+  const lock = await reservarIdempotencia({
+    idempotencyKey: idempotencyKey || `anular_venta_${desiredId}`,
+    tipo: 'venta_anulada',
+    entityId: desiredId,
+    usuarioId,
+  })
+
+  const id = lock?.entityId || desiredId
+  const now = Date.now()
+
+  const venta = await getValue(`ventas/${id}`)
+  if (!venta) {
+    const err = new Error('venta_no_existe')
+    err.code = 'venta_no_existe'
+    throw err
+  }
+
+  const sid = String(venta?.sucursalId || sucursalId || '').trim()
+  if (!sid) {
+    const err = new Error('sucursalId_required')
+    err.code = 'sucursalId_required'
+    throw err
+  }
+
+  const estado = String(venta?.estado || '').trim()
+  if (estado === 'anulada') {
+    await update(ref(db), {
+      [`idempotencias/${lock.key}/estado`]: 'confirmada',
+      [`idempotencias/${lock.key}/etapa`]: 'confirmada',
+      [`idempotencias/${lock.key}/actualizadoEn`]: now,
+      [`idempotencias/${lock.key}/confirmadoEn`]: venta?.anuladoEn ?? now,
+    }).catch(() => {})
+    return { ok: true, alreadyAnulada: true }
+  }
+  if (estado !== 'confirmada') {
+    const err = new Error('venta_no_confirmada')
+    err.code = 'venta_no_confirmada'
+    throw err
+  }
+
+  const creadoEn = asNumber(venta?.creadoEn, now)
+  const total = asNumber(venta?.total, 0)
+  const costoTotal = asNumber(venta?.costoTotal, 0)
+  const margenBruto = asNumber(venta?.margenBruto, total - costoTotal)
+
+  const items = venta?.items && typeof venta.items === 'object' ? venta.items : {}
+  const stockToRestore = [] // [{ productoId, talla, cantidad }]
+  const lotToRestore = [] // [{ productoId, talla, loteId, cantidad, creadoEn }]
+
+  for (const [productoId, detail] of Object.entries(items)) {
+    const pid = String(productoId || '').trim()
+    if (!pid) continue
+
+    const tallas = detail?.tallas && typeof detail.tallas === 'object' ? detail.tallas : {}
+    for (const [tallaKey, qtyRaw] of Object.entries(tallas)) {
+      const talla = String(tallaKey ?? '').trim()
+      const qty = asNumber(qtyRaw, 0)
+      if (!talla || qty <= 0) continue
+      stockToRestore.push({ productoId: pid, talla, cantidad: qty })
+    }
+
+    const consumo = detail?.consumoLotes && typeof detail.consumoLotes === 'object' ? detail.consumoLotes : {}
+    for (const [tallaKey, consumos] of Object.entries(consumo || {})) {
+      const talla = String(tallaKey ?? '').trim()
+      if (!talla) continue
+      const list = Array.isArray(consumos) ? consumos : []
+      for (const c of list) {
+        const loteId = String(c?.loteId || '').trim()
+        const qty = asNumber(c?.cantidad, 0)
+        if (!loteId || qty <= 0) continue
+        lotToRestore.push({ productoId: pid, talla, loteId, cantidad: qty, creadoEn: 0 })
+      }
+    }
+  }
+
+  // Resolver creadoEn por lote para re-activar indice `lotesCompraActivos` correctamente.
+  if (lotToRestore.length) {
+    const unique = new Map()
+    for (const it of lotToRestore) unique.set(`${it.productoId}::${it.talla}::${it.loteId}`, it)
+
+    const resolved = await Promise.all(
+      Array.from(unique.values()).map(async (it) => {
+        const lotePath = `lotesCompra/${sid}/${it.productoId}/${it.talla}/${it.loteId}`
+        const lote = await getValue(lotePath).catch(() => null)
+        if (!lote) {
+          const err = new Error('lote_no_existe')
+          err.code = 'lote_no_existe'
+          err.lotePath = lotePath
+          throw err
+        }
+        const ce = asNumber(lote?.creadoEn, 0) || creadoEn
+        return { ...it, creadoEn: ce }
+      })
+    )
+
+    const byKey = new Map(resolved.map((x) => [`${x.productoId}::${x.talla}::${x.loteId}`, x]))
+    for (let i = 0; i < lotToRestore.length; i++) {
+      const k = `${lotToRestore[i].productoId}::${lotToRestore[i].talla}::${lotToRestore[i].loteId}`
+      const r = byKey.get(k)
+      if (r) lotToRestore[i].creadoEn = r.creadoEn
+    }
+  }
+
+  const lotesRestaurados = []
+  const stockRestaurado = []
+
+  try {
+    // 1) Devolver consumo de lotes (FIFO).
+    for (const it of lotToRestore) {
+      await ajustarCantidadDisponibleLote({
+        sucursalId: sid,
+        productoId: it.productoId,
+        talla: it.talla,
+        loteId: it.loteId,
+        delta: it.cantidad,
+        creadoEn: it.creadoEn,
+      })
+      lotesRestaurados.push(it)
+    }
+
+    // 2) Devolver inventario.
+    for (const it of stockToRestore) {
+      await incrementarStockSucursal({ sucursalId: sid, productoId: it.productoId, talla: it.talla, cantidad: it.cantidad })
+      stockRestaurado.push(it)
+    }
+  } catch (err) {
+    // rollback best-effort para mantener consistencia
+    for (const it of stockRestaurado) {
+      await descontarStockSucursal({ sucursalId: sid, productoId: it.productoId, talla: it.talla, cantidad: it.cantidad }).catch(() => {})
+    }
+    for (const it of lotesRestaurados) {
+      await ajustarCantidadDisponibleLote({
+        sucursalId: sid,
+        productoId: it.productoId,
+        talla: it.talla,
+        loteId: it.loteId,
+        delta: -asNumber(it.cantidad, 0),
+        creadoEn: it.creadoEn,
+      }).catch(() => {})
+    }
+    await update(ref(db), {
+      [`idempotencias/${lock.key}/estado`]: 'fallida',
+      [`idempotencias/${lock.key}/etapa`]: 'fallida',
+      [`idempotencias/${lock.key}/actualizadoEn`]: Date.now(),
+      [`idempotencias/${lock.key}/error`]: err?.code || err?.message || 'repeat',
+    }).catch(() => {})
+    throw err
+  }
+
+  const anuladoEn = Date.now()
+  const movId = `venta_anulada_${safeKey(id)}`
+
+  const movimientoItems = {}
+  for (const it of stockToRestore) {
+    if (!movimientoItems[it.productoId]) movimientoItems[it.productoId] = { tallas: {} }
+    movimientoItems[it.productoId].tallas[it.talla] = (movimientoItems[it.productoId].tallas[it.talla] || 0) + asNumber(it.cantidad, 0)
+  }
+  const loteTracePaths = {}
+  for (const it of lotToRestore) {
+    appendLoteMovimiento(loteTracePaths, {
+      sucursalId: sid,
+      productoId: it.productoId,
+      talla: it.talla,
+      loteId: it.loteId,
+      traceId: `reversion_venta_${safeKey(id)}_${safeKey(it.productoId)}_${safeKey(it.talla)}_${safeKey(it.loteId)}`,
+      entry: buildLoteMovimientoEntry({
+        kind: 'reversion',
+        operationType: 'venta',
+        entityId: id,
+        movimientoId: movId,
+        cantidad: it.cantidad,
+        creadoEn: anuladoEn,
+        usuarioId,
+        extra: { motivo: motivo ? String(motivo).trim() : null },
+      }),
+    })
+  }
+
+  await update(ref(db), {
+    [`ventas/${id}/estado`]: 'anulada',
+    [`ventas/${id}/anuladoEn`]: anuladoEn,
+    [`ventas/${id}/anuladoPorUsuarioId`]: usuarioId ?? null,
+    [`ventas/${id}/anuladoMotivo`]: motivo ? String(motivo).trim() : null,
+    [`ventas/${id}/anuladoNota`]: nota ? String(nota).trim() : null,
+
+    [`ventasPorSucursal/${sid}/${id}/estado`]: 'anulada',
+    [`ventasPorSucursal/${sid}/${id}/anuladoEn`]: anuladoEn,
+    [`ventasPorSucursal/${sid}/${id}/anuladoPorUsuarioId`]: usuarioId ?? null,
+    [`ventasPorSucursal/${sid}/${id}/anuladoNota`]: nota ? String(nota).trim() : null,
+
+    [`movimientosInventario/${movId}`]: {
+      tipo: 'venta_anulada',
+      sucursalId: sid,
+      usuarioId: usuarioId ?? null,
+      creadoEn: anuladoEn,
+      referencia: { ventaId: id, transferenciaId: null, nota: nota ?? null },
+      unidades: stockToRestore.reduce((acc, x) => acc + asNumber(x.cantidad, 0), 0),
+      total,
+      costoTotal,
+      margenBruto,
+      items: movimientoItems,
+      consumoLotesRestaurado: lotToRestore.length ? true : null,
+    },
+    ...loteTracePaths,
+
+    [`idempotencias/${lock.key}/estado`]: 'confirmada',
+    [`idempotencias/${lock.key}/etapa`]: 'confirmada',
+    [`idempotencias/${lock.key}/actualizadoEn`]: anuladoEn,
+    [`idempotencias/${lock.key}/confirmadoEn`]: anuladoEn,
+  })
+
+  await decrementarReporteVentaDia({
+    sucursalId: sid,
+    ts: creadoEn,
+    total,
+    costoTotal,
+    margenBruto,
+    ventaId: id,
+  }).catch(() => {})
+
+  return { ok: true, ventaId: id }
 }
 
 function groupTransferenciaItems(items) {
@@ -1004,6 +1633,10 @@ export async function solicitarTransferencia({
         creadoEn,
         transferidoEn: null,
         transferidoPorUsuarioId: null,
+        anuladoEn: null,
+        anuladoPorUsuarioId: null,
+        anuladoMotivo: null,
+        anuladoNota: null,
         nota: nota ?? null,
         items: grouped,
       },
@@ -1026,6 +1659,87 @@ export async function solicitarTransferencia({
   }
 
   return { transferenciaId: id }
+}
+
+export async function anularTransferencia({ transferenciaId, usuarioId, motivo, nota, idempotencyKey }) {
+  const desiredId = String(transferenciaId || '').trim()
+  if (!desiredId) {
+    const err = new Error('transferenciaId_required')
+    err.code = 'transferenciaId_required'
+    throw err
+  }
+
+  const uid = String(usuarioId || '').trim()
+  if (!uid) {
+    const err = new Error('auth_required')
+    err.code = 'auth_required'
+    throw err
+  }
+
+  const lock = await reservarIdempotencia({
+    idempotencyKey: idempotencyKey || `anular_${desiredId}`,
+    tipo: 'transferencia_anulada',
+    entityId: desiredId,
+    usuarioId: uid,
+  })
+
+  const id = lock?.entityId || desiredId
+  const now = Date.now()
+
+  const transferencia = await getValue(`transferencias/${id}`)
+  if (!transferencia) {
+    const err = new Error('transferencia_no_existe')
+    err.code = 'transferencia_no_existe'
+    throw err
+  }
+
+  const estado = String(transferencia?.estado || '').trim()
+  if (estado === 'anulada') {
+    await update(ref(db), {
+      [`idempotencias/${lock.key}/estado`]: 'confirmada',
+      [`idempotencias/${lock.key}/etapa`]: 'confirmada',
+      [`idempotencias/${lock.key}/actualizadoEn`]: now,
+      [`idempotencias/${lock.key}/confirmadoEn`]: transferencia?.anuladoEn ?? now,
+    }).catch(() => {})
+    return { ok: true, alreadyAnulada: true }
+  }
+  if (estado === 'transferido') {
+    const err = new Error('transferencia_ya_transferida')
+    err.code = 'transferencia_ya_transferida'
+    throw err
+  }
+  if (estado !== 'pendiente') {
+    const err = new Error('transferencia_estado_invalido')
+    err.code = 'transferencia_estado_invalido'
+    throw err
+  }
+
+  const movId = `transferencia_anulada_${id}`
+
+  await update(ref(db), {
+    [`transferencias/${id}/estado`]: 'anulada',
+    [`transferencias/${id}/anuladoEn`]: now,
+    [`transferencias/${id}/anuladoPorUsuarioId`]: uid,
+    [`transferencias/${id}/anuladoMotivo`]: motivo ?? 'sin_motivo',
+    [`transferencias/${id}/anuladoNota`]: nota ?? null,
+    [`movimientosInventario/${movId}`]: {
+      tipo: 'transferencia_anulada',
+      transferenciaId: id,
+      sucursalId: transferencia?.haciaSucursalId ?? null,
+      desdeSucursalId: transferencia?.desdeSucursalId ?? null,
+      haciaSucursalId: transferencia?.haciaSucursalId ?? null,
+      creadoEn: now,
+      creadoPorUsuarioId: uid,
+      motivo: motivo ?? null,
+      nota: nota ?? null,
+    },
+    [`idempotencias/${lock.key}/estado`]: 'confirmada',
+    [`idempotencias/${lock.key}/etapa`]: 'confirmada',
+    [`idempotencias/${lock.key}/actualizadoEn`]: now,
+    [`idempotencias/${lock.key}/confirmadoEn`]: now,
+  })
+
+  return { ok: true, transferenciaId: id }
 }
 
 export async function transferirTransferencia({ transferenciaId, usuarioId, idempotencyKey }) {
@@ -1103,6 +1817,8 @@ export async function transferirTransferencia({ transferenciaId, usuarioId, idem
   }
 
   const transferidoEn = Date.now()
+  const movSalidaId = `tr_salida_${id}`
+  const movEntradaId = `tr_entrada_${id}`
   const descontados = []
   const incrementados = []
   const reservedLotes = []
@@ -1111,6 +1827,7 @@ export async function transferirTransferencia({ transferenciaId, usuarioId, idem
   let costoIncompleto = false
   const destLotPaths = {}
   const destActivePaths = {}
+  const loteTracePaths = {}
   try {
     // 1) Consumir lotes FIFO en sucursal origen (para mantener costo/margen por lotes).
     for (const it of flat) {
@@ -1143,8 +1860,49 @@ export async function transferirTransferencia({ transferenciaId, usuarioId, idem
           origenSucursalId: desdeSucursalId,
           origenLoteId,
           nota: transferencia?.nota ?? null,
+          sourceType: 'transferencia_entrada',
+          sourceId: id,
+          sourceMovimientoId: movEntradaId,
         }
         destActivePaths[`lotesCompraActivos/${haciaSucursalId}/${it.productoId}/${it.talla}/${loteIdDestino}`] = transferidoEn
+        appendLoteMovimiento(loteTracePaths, {
+          sucursalId: haciaSucursalId,
+          productoId: it.productoId,
+          talla: it.talla,
+          loteId: loteIdDestino,
+          traceId: `entrada_transferencia_${safeKey(id)}_${safeKey(origenLoteId)}`,
+          entry: buildLoteMovimientoEntry({
+            kind: 'entrada',
+            operationType: 'transferencia',
+            entityId: id,
+            movimientoId: movEntradaId,
+            cantidad: c?.cantidad,
+            costoUnitario: c?.costoUnitario,
+            costoDesconocido: c?.costoDesconocido === true,
+            creadoEn: transferidoEn,
+            usuarioId: uid,
+            extra: { desdeSucursalId, haciaSucursalId, origenLoteId },
+          }),
+        })
+        appendLoteMovimiento(loteTracePaths, {
+          sucursalId: desdeSucursalId,
+          productoId: it.productoId,
+          talla: it.talla,
+          loteId: origenLoteId,
+          traceId: `salida_transferencia_${safeKey(id)}_${safeKey(it.productoId)}_${safeKey(it.talla)}_${safeKey(origenLoteId)}`,
+          entry: buildLoteMovimientoEntry({
+            kind: 'salida',
+            operationType: 'transferencia',
+            entityId: id,
+            movimientoId: movSalidaId,
+            cantidad: c?.cantidad,
+            costoUnitario: c?.costoUnitario,
+            costoDesconocido: c?.costoDesconocido === true,
+            creadoEn: transferidoEn,
+            usuarioId: uid,
+            extra: { desdeSucursalId, haciaSucursalId },
+          }),
+        })
       }
 
       // 1.b) Si habia stock viejo sin lotes, creamos un lote "legacy" con costo desconocido para cuadrar.
@@ -1162,8 +1920,30 @@ export async function transferirTransferencia({ transferenciaId, usuarioId, idem
           origenSucursalId: desdeSucursalId,
           origenLoteId: null,
           nota: 'Stock sin lote en origen (legacy)',
+          sourceType: 'transferencia_entrada',
+          sourceId: id,
+          sourceMovimientoId: movEntradaId,
         }
         destActivePaths[`lotesCompraActivos/${haciaSucursalId}/${it.productoId}/${it.talla}/${loteIdDestino}`] = transferidoEn
+        appendLoteMovimiento(loteTracePaths, {
+          sucursalId: haciaSucursalId,
+          productoId: it.productoId,
+          talla: it.talla,
+          loteId: loteIdDestino,
+          traceId: `entrada_transferencia_legacy_${safeKey(id)}_${safeKey(it.productoId)}_${safeKey(it.talla)}`,
+          entry: buildLoteMovimientoEntry({
+            kind: 'entrada',
+            operationType: 'transferencia',
+            entityId: id,
+            movimientoId: movEntradaId,
+            cantidad: rem,
+            costoUnitario: 0,
+            costoDesconocido: true,
+            creadoEn: transferidoEn,
+            usuarioId: uid,
+            extra: { desdeSucursalId, haciaSucursalId, origenLoteId: null },
+          }),
+        })
       }
     }
 
@@ -1188,9 +1968,6 @@ export async function transferirTransferencia({ transferenciaId, usuarioId, idem
       })
       incrementados.push(it)
     }
-
-    const movSalidaId = `tr_salida_${id}`
-    const movEntradaId = `tr_entrada_${id}`
 
     const itemsSalida = {}
     const itemsEntrada = {}
@@ -1259,6 +2036,7 @@ export async function transferirTransferencia({ transferenciaId, usuarioId, idem
 
       ...destLotPaths,
       ...destActivePaths,
+      ...loteTracePaths,
 
       [`idempotencias/${lock.key}/estado`]: 'confirmada',
       [`idempotencias/${lock.key}/etapa`]: 'confirmada',

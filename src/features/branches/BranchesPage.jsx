@@ -46,6 +46,22 @@ export default function BranchesPage() {
   const admin = isAdmin(userDB)
   const filterLower = lower(filter)
 
+  function BranchAssetView({ url, placeholder }) {
+    if (url) {
+      return (
+        <a
+          href={url}
+          target="_blank"
+          rel="noreferrer"
+          className="inline-flex items-center rounded-xl bg-surface/50 px-3 py-2 text-[12px] font-semibold text-accent ring-1 ring-border/15 hover:bg-surface/70"
+        >
+          Ver
+        </a>
+      )
+    }
+    return <span className="text-muted text-[12px]">{placeholder || '-'}</span>
+  }
+
   useEffect(() => {
     if (sucursales !== undefined) return
     readUserData('sucursales', setSucursales)
@@ -168,6 +184,7 @@ export default function BranchesPage() {
   }
 
   async function save(branch) {
+    if (!admin) return setUserSuccess?.('No tienes permisos')
     const uuid = branch?.uuid
     if (!uuid) return
 
@@ -225,11 +242,13 @@ export default function BranchesPage() {
   }
 
   function requestDelete(branch) {
+    if (!admin) return setUserSuccess?.('No tienes permisos')
     setUserItem(branch)
     setModal('Delete')
   }
 
   function deleteConfirm() {
+    if (!admin) return setUserSuccess?.('No tienes permisos')
     const callback2 = () => setModal('')
     const callback = () => readUserData(`sucursales/`, setServicios, callback2)
     if (!item?.uuid) return setModal('')
@@ -239,6 +258,13 @@ export default function BranchesPage() {
   return (
     <DataPanel
       title="Sucursales"
+      actions={
+        admin ? (
+          <Button theme="Primary" styled="w-auto whitespace-nowrap" click={() => redirectToAdd()}>
+            Agregar sucursal
+          </Button>
+        ) : null
+      }
       filter={{ value: filter, onChange: onChangeFilter, placeholder: 'Filtrar por nombre' }}
       scroll="x"
       footer={
@@ -267,7 +293,7 @@ export default function BranchesPage() {
               Nombre de sucursal
             </th>
             <th scope="col" className="min-w-[250px] px-3 py-3">
-              Dirección
+              Direccion
             </th>
             <th scope="col" className="min-w-[200px] px-3 py-3">
               Whatsapp
@@ -278,9 +304,11 @@ export default function BranchesPage() {
             <th scope="col" className="min-w-[180px] px-3 py-3 text-center">
               Logo
             </th>
-            <th scope="col" className="text-center px-3 py-3">
-              Acción
-            </th>
+            {admin ? (
+              <th scope="col" className="text-center px-3 py-3">
+                Accion
+              </th>
+            ) : null}
           </tr>
         </THead>
         <tbody>
@@ -296,8 +324,8 @@ export default function BranchesPage() {
                 className="text-[13px] border-b border-transparent hover:bg-surface/50 odd:bg-surface/20 even:bg-surface/10"
                 key={branch?.uuid ?? branch?.nombre ?? index}
               >
-                <td className="min-w-[50px] px-3 py-4 text-gray-900 align-middle">{pagination.from + index}</td>
-                <td className="min-w-[210px] px-3 py-4 text-gray-900">
+                <td className="min-w-[50px] px-3 py-4 text-muted align-middle">{pagination.from + index}</td>
+                <td className="min-w-[210px] px-3 py-4 text-text">
                   {admin ? (
                     <input
                       type="text"
@@ -311,7 +339,7 @@ export default function BranchesPage() {
                     branch?.nombre
                   )}
                 </td>
-                <td className="min-w-[250px] px-3 py-4 text-gray-900">
+                <td className="min-w-[250px] px-3 py-4 text-text">
                   {admin ? (
                     <textarea
                       rows="1"
@@ -319,13 +347,13 @@ export default function BranchesPage() {
                       name="direccion"
                       defaultValue={branch?.direccion}
                       className="block w-full resize-none rounded-xl bg-surface/70 p-2.5 text-sm text-text shadow-sm ring-1 ring-border/15 outline-none focus:ring-2 focus:ring-accent/25"
-                      placeholder="Escribe aquí..."
+                      placeholder="Escribe aqui..."
                     />
                   ) : (
-                    <span className="text-text">{branch?.direccion || '—'}</span>
+                    <span className="text-text">{branch?.direccion || '-'}</span>
                   )}
                 </td>
-                <td className="min-w-[200px] px-3 py-4 text-gray-900">
+                <td className="min-w-[200px] px-3 py-4 text-text">
                   {admin ? (
                     <textarea
                       rows="1"
@@ -334,27 +362,18 @@ export default function BranchesPage() {
                       cols="4"
                       defaultValue={branch?.whatsapp}
                       className="block w-full resize-none rounded-xl bg-surface/70 p-2.5 text-sm text-text shadow-sm ring-1 ring-border/15 outline-none focus:ring-2 focus:ring-accent/25"
-                      placeholder="Escribe aquí..."
+                      placeholder="Escribe aqui..."
                     />
                   ) : (
-                    <span className="text-text">{branch?.whatsapp || '—'}</span>
+                    <span className="text-text">{branch?.whatsapp || '-'}</span>
                   )}
                 </td>
-                  <td className="px-3 py-4 text-center">
+                <td className="px-3 py-4 text-center">
+                  {admin ? (
                     <ImageUploadField
                       placeholder="Sin QR"
                       preview={qrPreview || branch?.qrUrl}
                       buttonLabel={qrPreview || branch?.qrUrl ? 'Cambiar QR' : 'Agregar QR'}
-                      // description=""
-                      // statusText={
-                      //   removal.qr
-                      //     ? 'Se eliminará este QR'
-                      //     : qrPreview
-                      //       ? 'Cambios pendientes'
-                      //       : branch?.qrUrl
-                      //         ? 'QR guardado'
-                      //         : ''
-                      // }
                       onSelect={handleAssetSelection(branch, 'qr')}
                       onCancel={qrPreview ? () => cancelTempSelection(branch, 'qr') : undefined}
                       onRemove={branch?.qrUrl && !removal.qr ? () => markAssetForRemoval(branch, 'qr') : undefined}
@@ -362,22 +381,16 @@ export default function BranchesPage() {
                       actionText={qrPreview || branch?.qrUrl ? 'Cambiar' : undefined}
                       catalogMode
                     />
-                  </td>
-                  <td className="px-3 py-4 text-center">
+                  ) : (
+                    <BranchAssetView url={branch?.qrUrl || null} placeholder="Sin QR" />
+                  )}
+                </td>
+                <td className="px-3 py-4 text-center">
+                  {admin ? (
                     <ImageUploadField
                       placeholder="Sin logo"
                       preview={logoPreview || branch?.logoUrl}
                       buttonLabel={logoPreview || branch?.logoUrl ? 'Cambiar logo' : 'Agregar logo'}
-                      // description=""
-                      // statusText={
-                      //   removal.logo
-                      //     ? 'Se eliminará este logo'
-                      //     : logoPreview
-                      //       ? 'Cambios pendientes'
-                      //       : branch?.logoUrl
-                      //         ? 'Logo guardado'
-                      //         : 'Sin logo'
-                      // }
                       onSelect={handleAssetSelection(branch, 'logo')}
                       onCancel={logoPreview ? () => cancelTempSelection(branch, 'logo') : undefined}
                       onRemove={branch?.logoUrl && !removal.logo ? () => markAssetForRemoval(branch, 'logo') : undefined}
@@ -385,10 +398,13 @@ export default function BranchesPage() {
                       actionText={logoPreview || branch?.logoUrl ? 'Cambiar' : undefined}
                       catalogMode
                     />
-                  </td>
-                <td className="min-w-[200px] px-3 py-4">
-                  {admin ? (
-                    hasDraft ? (
+                  ) : (
+                    <BranchAssetView url={branch?.logoUrl || null} placeholder="Sin logo" />
+                  )}
+                </td>
+                {admin ? (
+                  <td className="min-w-[200px] px-3 py-4 text-center">
+                    {hasDraft ? (
                       <Button theme="Primary" click={() => save(branch)}>
                         Guardar
                       </Button>
@@ -396,24 +412,14 @@ export default function BranchesPage() {
                       <Button theme="Danger" click={() => requestDelete(branch)}>
                         Eliminar
                       </Button>
-                    )
-                  ) : (
-                    <span className="text-muted">—</span>
-                  )}
-                </td>
+                    )}
+                  </td>
+                ) : null}
               </tr>
             )
           })}
         </tbody>
       </Table>
-
-      {admin && (
-        <div className="mt-4 flex justify-end">
-          <Button theme="Primary" styled="w-auto whitespace-nowrap" click={() => redirectToAdd()}>
-            Agregar sucursal
-          </Button>
-        </div>
-      )}
     </DataPanel>
   )
 }   

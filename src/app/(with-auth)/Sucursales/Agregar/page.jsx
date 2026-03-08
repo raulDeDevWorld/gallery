@@ -1,6 +1,6 @@
 'use client'
 import { writeUserData, readUserData } from '@/firebase/database'
-import { useState, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useUser } from '@/context/'
 import Input from '@/components/Input'
 import Select from '@/components/Select'
@@ -17,6 +17,7 @@ import { useMask } from '@react-input/mask';
 import { useRouter } from 'next/navigation';
 import { WithAuth } from '@/HOCs/WithAuth'
 import { generateUUID } from '@/utils/UIDgenerator'
+import { isAdmin } from '@/lib/roles'
 // import { disponibilidad } from '@/constants'
 
 
@@ -26,6 +27,16 @@ function Home() {
     const { user, userDB, setUserData, setUserSuccess, success, setModal, modal, sucursales, setSucursales } = useUser()
     const [state, setState] = useState({})
     const [saving, setSaving] = useState(false)
+
+    const admin = isAdmin(userDB)
+
+    useEffect(() => {
+        if (userDB === undefined) return
+        if (!admin) {
+            setUserSuccess?.('No tienes permisos')
+            router.replace('/Sucursales')
+        }
+    }, [admin, router, setUserSuccess, userDB])
 
     const inputRefWhatsApp = useMask({ mask: '+ 591 __ ___ ___', replacement: { _: /\d/ } });
 
@@ -84,7 +95,7 @@ function Home() {
                         <Input type="text" name="nombre" reference={inputRef1} onChange={onChangeHandler} require />
                     </div>
                     <div>
-                        <Label htmlFor="">Dirección</Label>
+                        <Label htmlFor="">Direccion</Label>
                         <Input type="text" name="direccion" reference={inputRef2} onChange={onChangeHandler} require />
                     </div>
                     <div>

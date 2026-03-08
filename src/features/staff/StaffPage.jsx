@@ -10,7 +10,7 @@ import TablePager from '@/components/TablePager'
 import { useUser } from '@/context/'
 import { readUserData, removeData, writeUserData } from '@/firebase/database'
 import { usePagination } from '@/hooks/usePagination'
-import { ROLES, canonicalRol, isAdmin, isPersonal, rolLabel } from '@/lib/roles'
+import { ROLES, canonicalRol, isAdmin, rolLabel } from '@/lib/roles'
 
 const ROLE_OPTIONS = [ROLES.admin, ROLES.personal, ROLES.cliente]
 
@@ -20,19 +20,21 @@ function StaffPage() {
   const [filter, setFilter] = useState('')
 
   const admin = isAdmin(userDB)
-  const personal = isPersonal(userDB)
+  const allowStaffSection = admin
 
   useEffect(() => {
+    if (!allowStaffSection) return
     if (clientes !== undefined) return
     const unsub = readUserData('usuarios', setClientes, undefined, (err) => setUserSuccess?.(err?.code || err?.message || 'repeat'))
     return () => (typeof unsub === 'function' ? unsub() : null)
-  }, [clientes, setClientes, setUserSuccess])
+  }, [allowStaffSection, clientes, setClientes, setUserSuccess])
 
   useEffect(() => {
+    if (!allowStaffSection) return
     if (sucursales !== undefined) return
     const unsub = readUserData('sucursales', setSucursales, undefined, (err) => setUserSuccess?.(err?.code || err?.message || 'repeat'))
     return () => (typeof unsub === 'function' ? unsub() : null)
-  }, [setSucursales, setUserSuccess, sucursales])
+  }, [allowStaffSection, setSucursales, setUserSuccess, sucursales])
 
   const sucursalesArr = useMemo(() => {
     const obj = sucursales && typeof sucursales === 'object' ? sucursales : {}
@@ -49,10 +51,10 @@ function StaffPage() {
   }, [clientes])
 
   const visibleRows = useMemo(() => {
-    if (admin || personal) return usuariosRows
-    if (user?.uid) return usuariosRows.filter((u) => u.uid === user.uid)
+    // Admin debe ver todo (incluye pendientes) para poder aprobar/asignar sucursal.
+    if (admin) return usuariosRows
     return []
-  }, [admin, personal, user?.uid, usuariosRows])
+  }, [admin, usuariosRows])
 
   const filteredRows = useMemo(() => {
     const q = String(filter || '').trim().toLowerCase()
@@ -118,12 +120,31 @@ function StaffPage() {
   async function confirmDelete() {
     if (!admin) return setUserSuccess?.('No tienes permisos')
     if (!item?.uid) return
-    await removeData(`usuarios/${item.uid}`, setUserSuccess, () => setModal(''))
+    const deletedUid = item.uid
+    const res = await removeData(`usuarios/${deletedUid}`, setUserSuccess)
+    if (!res?.ok) return
+
+    setClientes((prev) => {
+      const next = { ...((prev && typeof prev === 'object') ? prev : {}) }
+      delete next[deletedUid]
+      return next
+    })
+    setUserItem(null)
+    setModal('')
+  }
+
+  if (!allowStaffSection) {
+    return (
+      <DataPanel title="Personal" subtitle="No tienes permisos para ver esta seccion.">
+        <div className="p-6 text-[13px] text-muted">Solo rol admin.</div>
+      </DataPanel>
+    )
   }
 
   return (
     <DataPanel
       title="Personal"
+      subtitle="Admin: puedes ver y administrar todos los usuarios (incluye pendientes)."
       filter={{ value: filter, onChange: onChangeFilter, placeholder: 'Filtrar por nombre' }}
       scroll="x"
       footer={
@@ -161,7 +182,7 @@ function StaffPage() {
               CI
             </th>
             <th scope="col" className="px-3 py-3">
-              Dirección
+              Direccion
             </th>
             <th scope="col" className="px-3 py-3">
               Whatsapp
@@ -200,10 +221,10 @@ function StaffPage() {
                 <tr className="text-[13px] border-b border-transparent hover:bg-surface/50 odd:bg-surface/20 even:bg-surface/10" key={u.uid}>
                   <td className="min-w-[50px] h-full px-3 py-4 text-muted align-middle">{pagination.from + index}</td>
                   <td className="min-w-[250px] px-3 py-4 text-text">
-                    <div className="text-[13px] font-semibold">{u?.nombre || '—'}</div>
+                    <div className="text-[13px] font-semibold">{u?.nombre || '-'}</div>
                     <div className="text-[12px] text-muted">{rolLabel(u)}</div>
                   </td>
-                  <td className="min-w-[260px] px-3 py-4 text-text">{u?.correo || u?.email || u?.mail || '—'}</td>
+                  <td className="min-w-[260px] px-3 py-4 text-text">{u?.correo || u?.email || u?.mail || '-'}</td>
                   <td className="min-w-[160px] px-3 py-4 text-text">
                     {u?.solicitudEstado === 'pendiente' ? (
                       <span className="inline-flex items-center rounded-full bg-amber-500/15 px-2 py-1 text-[12px] font-semibold text-amber-500 ring-1 ring-amber-500/20">
@@ -214,12 +235,12 @@ function StaffPage() {
                         Aprobado
                       </span>
                     ) : (
-                      <span className="text-muted">—</span>
+                      <span className="text-muted">-</span>
                     )}
                   </td>
-                  <td className="min-w-[150px] px-3 py-4 text-text">{u?.ci || '—'}</td>
-                  <td className="min-w-[250px] px-3 py-4 text-text">{u?.direccion || '—'}</td>
-                  <td className="min-w-[150px] px-3 py-4 text-text">{u?.whatsapp || '—'}</td>
+                  <td className="min-w-[150px] px-3 py-4 text-text">{u?.ci || '-'}</td>
+                  <td className="min-w-[250px] px-3 py-4 text-text">{u?.direccion || '-'}</td>
+                  <td className="min-w-[150px] px-3 py-4 text-text">{u?.whatsapp || '-'}</td>
 
                   <td className="min-w-[200px] px-3 py-4 text-text">
                     {admin ? (
@@ -255,7 +276,7 @@ function StaffPage() {
                         </Button>
                       )
                     ) : (
-                      <span className="text-muted">—</span>
+                      <span className="text-muted">-</span>
                     )}
                   </td>
                 </tr>
@@ -269,4 +290,3 @@ function StaffPage() {
 }
 
 export default StaffPage
-

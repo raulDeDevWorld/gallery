@@ -26,17 +26,51 @@ function onAuth(setUserProfile, setUserData) {
   if (!auth) return () => {}
 
   let unsubscribeUserDb = null
+  let retryTimer = null
 
-  const unsubscribeAuth = onAuthStateChanged(auth, (user) => {
+  const cleanupUserDb = () => {
     if (typeof unsubscribeUserDb === 'function') {
       unsubscribeUserDb()
       unsubscribeUserDb = null
     }
+    if (retryTimer) {
+      clearTimeout(retryTimer)
+      retryTimer = null
+    }
+  }
+
+  const subscribeUserDb = (user, retry = 0) => {
+    cleanupUserDb()
+    unsubscribeUserDb = readUserData(
+      `usuarios/${user.uid}`,
+      setUserData,
+      undefined,
+      async (error) => {
+        const code = String(error?.code || '').trim().toLowerCase()
+        if (code === 'permission_denied' && retry < 3) {
+          setUserData(undefined)
+          try {
+            await user.getIdToken(true)
+          } catch {}
+          retryTimer = setTimeout(() => {
+            retryTimer = null
+            subscribeUserDb(user, retry + 1)
+          }, 400 * (retry + 1))
+          return
+        }
+
+        setUserData(null)
+      }
+    )
+  }
+
+  const unsubscribeAuth = onAuthStateChanged(auth, (user) => {
+    cleanupUserDb()
 
     if (user) {
       setUserProfile(user)
       setUserData(undefined)
-      unsubscribeUserDb = readUserData(`usuarios/${user.uid}`, setUserData)
+      subscribeUserDb(user)
     } else {
       setUserProfile(null)
       setUserData(undefined)
@@ -44,7 +78,7 @@ function onAuth(setUserProfile, setUserData) {
   });
 
   return () => {
-    if (typeof unsubscribeUserDb === 'function') unsubscribeUserDb()
+    cleanupUserDb()
     unsubscribeAuth()
   }
 }

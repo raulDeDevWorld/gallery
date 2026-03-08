@@ -4,6 +4,7 @@ import LoaderWithLogo from '@/components/LoaderWithLogo'
 
 import { useEffect, useRef, useState } from 'react'
 import { handleSignOut } from '@/firebase/utils'
+import { getValue } from '@/firebase/database'
 import { useRouter } from 'next/navigation';
 import Cart from '@/components/Cart'
 import Link from 'next/link'
@@ -16,13 +17,14 @@ import AppearanceMenu from '@/components/AppearanceMenu'
 import { ROLES, canonicalRol, isAdmin, isPersonal, rolLabel } from '@/lib/roles'
 
 function AppShell({ children }) { 
-  const { user, userDB, setUserCart, setUserSuccess, businessData, setUserProduct, setRecetaDB, whatsapp, setWhatsapp, nav, setNav, modal, setModal, cart, introClientVideo, setIntroClientVideo, pendienteDB, setPendienteDB, productDB, videoClientRef, webScann, setWebScann, setTienda, setBusinessData } = useUser() 
+  const { user, userDB, sucursales, setUserCart, setUserSuccess, setUserData, businessData, setUserProduct, setRecetaDB, whatsapp, setWhatsapp, nav, setNav, modal, setModal, cart, introClientVideo, setIntroClientVideo, pendienteDB, setPendienteDB, productDB, videoClientRef, webScann, setWebScann, setTienda, setBusinessData } = useUser() 
   const router = useRouter() 
   const pathname = usePathname() 
   const path = useReactPath(); 
   const [isDesktop, setIsDesktop] = useState(() => typeof window !== 'undefined' && window.matchMedia('(min-width: 1024px)').matches)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const redirectedToRegisterRef = useRef(false)
+  const checkingUserDbRef = useRef(false)
 
   const registroCompleto = (u) => {
     const has = (v) => String(v ?? '').trim().length > 0
@@ -50,6 +52,17 @@ function AppShell({ children }) {
     const last = pathname.split('/').filter(Boolean).at(-1)
     return last ? last.replace(/-/g, ' ') : ''
   })()
+
+  const assignedSucursalId = String(userDB?.sucursalId ?? '').trim()
+  const assignedSucursal =
+    assignedSucursalId && sucursales && typeof sucursales === 'object'
+      ? sucursales[assignedSucursalId] || Object.values(sucursales).find((s) => String(s?.uuid ?? '').trim() === assignedSucursalId) || null
+      : null
+  const headerLogoSrc = assignedSucursal?.logoUrl || '/logo.png'
+  const headerSucursalName =
+    String(assignedSucursal?.nombre ?? '').trim() ||
+    String(userDB?.sucursalNombre ?? '').trim() ||
+    'Sin sucursal asignada'
 
 
   const back = (e) => { 
@@ -109,12 +122,38 @@ function AppShell({ children }) {
     if (userDB === undefined) return
     if (redirectedToRegisterRef.current) return
 
-    if (userDB === null || !registroCompleto(userDB)) {
-      redirectedToRegisterRef.current = true
+    if (userDB === null) {
+      if (checkingUserDbRef.current) return
+      checkingUserDbRef.current = true
+      let cancelled = false
+
+      ;(async () => {
+        try {
+          const fresh = await getValue(`usuarios/${user.uid}`).catch(() => null)
+          if (cancelled) return
+          if (fresh) {
+            setUserData(fresh)
+            return
+          }
+
+          redirectedToRegisterRef.current = true
+          router.replace('/Register')
+        } finally {
+          if (!cancelled) checkingUserDbRef.current = false
+        }
+      })()
+
+      return () => {
+        cancelled = true
+      }
       setUserSuccess?.('Completa tu registro (nombre, CI, dirección y whatsapp) para ingresar.')
+    }
+
+    if (!registroCompleto(userDB)) {
+      redirectedToRegisterRef.current = true
       router.replace('/Register')
     }
-  }, [user, userDB, router, setUserSuccess])
+  }, [user, userDB, router, setUserData, setUserSuccess])
 
   useEffect(() => {
     if (typeof window === 'undefined') return
@@ -137,6 +176,13 @@ function AppShell({ children }) {
   const rolCanon = canonicalRol(userDB?.rol, ROLES.cliente)
   const canUseDashboard = isAdmin(userDB) || isPersonal(userDB)
   const shouldBlockCliente = showApp && userDB !== undefined && userDB !== null && registroCompleto(userDB) && !canUseDashboard
+  const shouldBlockPersonalNoSucursal =
+    showApp &&
+    userDB !== undefined &&
+    userDB !== null &&
+    registroCompleto(userDB) &&
+    isPersonal(userDB) &&
+    String(userDB?.sucursalId ?? '').trim().length === 0
 
   if (shouldBlockCliente) {
     return (
@@ -155,6 +201,46 @@ function AppShell({ children }) {
               <div className="mt-1 text-[13px] font-semibold text-text">Rol actual: {rolLabel({ rol: rolCanon })}</div>
               {userDB?.solicitudEstado ? <div className="mt-1 text-[12px] text-muted">Solicitud: {String(userDB.solicitudEstado)}</div> : null}
               {userDB?.rolSolicitado ? <div className="mt-1 text-[12px] text-muted">Rol solicitado: {String(userDB.rolSolicitado)}</div> : null}
+            </div>
+
+            <div className="mt-6 flex flex-col sm:flex-row gap-3 justify-center w-full">
+              <button
+                type="button"
+                className="w-full sm:w-auto px-4 py-2.5 rounded-xl border border-border bg-surface hover:bg-surface-2 text-text transition-colors"
+                onClick={() => typeof window !== 'undefined' && window.location.reload()}
+              >
+                Actualizar
+              </button>
+              <button
+                type="button"
+                className="w-full sm:w-auto px-4 py-2.5 rounded-xl bg-accent text-black font-semibold hover:bg-accent/90 focus:outline-none focus:ring-2 focus:ring-accent/40"
+                onClick={signOutConfirm}
+              >
+                Cerrar sesion
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  if (shouldBlockPersonalNoSucursal) {
+    return (
+      <div className="min-h-screen w-screen flex items-center justify-center bg-bg px-6 text-center">
+        <div className="w-full max-w-[560px] rounded-3xl border border-border bg-surface shadow-xl p-6">
+          <div className="flex flex-col items-center">
+            <img src="/logo.png" alt="Logo" className="h-12" />
+            <h2 className="mt-4 text-[20px] font-semibold text-text">Sin sucursal asignada</h2>
+            <p className="mt-2 text-[14px] text-muted">
+              Tu usuario tiene rol <span className="font-semibold text-text">Personal</span>, pero no tiene una sucursal asignada.
+              Un administrador debe asignarte una sucursal para que puedas registrar ventas o gestionar transferencias.
+            </p>
+
+            <div className="mt-4 w-full rounded-2xl bg-surface-2/60 p-4 text-left ring-1 ring-border/15">
+              <div className="text-[12px] font-semibold text-muted">Estado</div>
+              <div className="mt-1 text-[13px] font-semibold text-text">Sucursal: (sin asignar)</div>
+              <div className="mt-1 text-[12px] text-muted">Rol actual: {rolLabel({ rol: rolCanon })}</div>
             </div>
 
             <div className="mt-6 flex flex-col sm:flex-row gap-3 justify-center w-full">
@@ -230,10 +316,10 @@ function AppShell({ children }) {
                     {pageTitle}
                   </span>
                   <div className="hidden lg:flex items-center gap-3 ml-3">
-                    <img src="/logo.png" className="h-[42px]" alt="Logo" />
+                    <img src={headerLogoSrc} className="h-[42px] w-auto object-contain" alt={headerSucursalName} />
                     <div className="flex flex-col leading-tight">
                       <span className="text-[13px] font-semibold text-nav-text">{pageTitle}</span> 
-                      <span className="text-[11px] text-nav-text/60">{pathname === '/' ? 'Catálogo' : 'Dashboard'}</span> 
+                      <span className="text-[11px] text-nav-text/60">{headerSucursalName}</span> 
                     </div> 
                   </div> 
                 </div>  
@@ -285,3 +371,4 @@ function AppShell({ children }) {
 
 
 export default AppShell
+

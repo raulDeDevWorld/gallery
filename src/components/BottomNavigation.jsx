@@ -29,6 +29,7 @@ export default function BottomNavigation({ rol }) {
 
     const role = getRol(rol || userDB)
     const admin = isAdmin(role)
+    const showPersonal = admin
 
     const go = (href) => router.push(href)
 
@@ -119,7 +120,7 @@ export default function BottomNavigation({ rol }) {
     }
 
     return (
-        <div className={`grid h-full ${admin ? 'grid-cols-5' : 'grid-cols-4'} mx-auto font-medium z-50`}>
+        <div className={`grid h-full ${admin ? 'grid-cols-4' : showPersonal ? 'grid-cols-3' : 'grid-cols-2'} mx-auto font-medium z-50`}>
             <NavButton onClick={() => go('/')} active={isActive('/')} label="Inventario">
                 <Store />
                 <span className="text-[12px] text-nav-text">Inventario</span>
@@ -133,10 +134,12 @@ export default function BottomNavigation({ rol }) {
                 <span className="text-[12px] text-nav-text">Sucursales</span>
             </NavButton>
 
-            <NavButton onClick={() => go('/Personal')} active={isActive('/Personal')} label="Personal">
-                <Profile />
-                <span className="text-[12px] text-nav-text">Personal</span>
-            </NavButton>
+            {showPersonal ? (
+                <NavButton onClick={() => go('/Personal')} active={isActive('/Personal')} label="Personal">
+                    <Profile />
+                    <span className="text-[12px] text-nav-text">Personal</span>
+                </NavButton>
+            ) : null}
 
             {admin ? (
                 <NavButton onClick={() => go('/Reportes')} active={isActive('/Reportes')} label="Reporte histórico">
@@ -149,10 +152,10 @@ export default function BottomNavigation({ rol }) {
                 </NavButton>
             ) : null}
 
-            <NavButton onClick={openSupport} active={false} label="Soporte">
+            {/* <NavButton onClick={openSupport} active={false} label="Soporte">
                 <Support />
                 <span className="text-[12px] text-nav-text">Soporte</span>
-            </NavButton>
+            </NavButton> */}
         </div>
     )
 }

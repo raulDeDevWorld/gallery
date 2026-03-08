@@ -140,7 +140,7 @@ function readUserData(route, setUserData, callback, onError) {
     },
     (error) => {
       console.error(error)
-      setUserData(null)
+      setUserData(undefined)
       if (typeof onError === 'function') onError(error)
       callback && callback !== undefined ? callback() : ''
     }

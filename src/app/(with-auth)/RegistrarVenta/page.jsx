@@ -5,11 +5,10 @@ import { createPortal } from 'react-dom'
 import DataPanel from '@/components/DataPanel'
 import Button from '@/components/Button'
 import BottomSheet from '@/components/BottomSheet'
-import Drawer from '@/components/Drawer'
 import LoaderBlack from '@/components/LoaderBlack'
 import { useUser } from '@/context'
 import { getPagedData, getValue, readUserData } from '@/firebase/database'
-import { registrarVenta, solicitarTransferencia } from '@/firebase/ops'
+import { registrarVenta } from '@/firebase/ops'
 import { lower } from '@/lib/string'
 import { isAdmin, isPersonal } from '@/lib/roles'
 import { generateUUID } from '@/utils/UIDgenerator'
@@ -146,7 +145,6 @@ export default function Page() {
 
   const [cart, setCart] = useState({}) // { [key]: { productoId, talla, cantidad, precioUnitario, precioRef, marca, modelo, nombre, maxStock } }
 
-  const [drawer, setDrawer] = useState(null) // { producto, talla, stockBySucursal, sucursalSel, cantidadSel, max }
   const confirmingRef = useRef(false)
   const [confirming, setConfirming] = useState(false)
 
@@ -188,7 +186,6 @@ export default function Page() {
     setResults([])
     setStockCache({})
     setCart({})
-    setDrawer(null)
     setCartOpen(false)
   }, [activeSucursalId])
 
@@ -401,76 +398,14 @@ export default function Page() {
     })
   }
 
-  async function openSolicitud(producto, talla) {
-    if (!personal || !mySucursalId) return
-    const productoId = safeId(producto?.__key)
-    const t = String(talla ?? '')
-    if (!productoId || !t.trim()) return
-
-    const others = sucursalesArr.filter((s) => s.uuid && s.uuid !== mySucursalId)
-    if (!others.length) return setUserSuccess?.('No hay otras sucursales')
-
-    setDrawer({ producto, talla: t, stockBySucursal: null, sucursalSel: '', cantidadSel: 1, max: 0 })
-    try {
-      const pairs = await Promise.all(
-        others.map(async (s) => {
-          const val = await getValue(`inventario/${s.uuid}/${productoId}/tallas/${t}`).catch(() => 0)
-          return [s.uuid, asNumber(val, 0)]
-        })
-      )
-      const stockBySucursal = Object.fromEntries(pairs)
-      const first = others.find((s) => asNumber(stockBySucursal[s.uuid], 0) > 0)
-      const sucursalSel = first?.uuid || ''
-      const max = sucursalSel ? asNumber(stockBySucursal[sucursalSel], 0) : 0
-      setDrawer({ producto, talla: t, stockBySucursal, sucursalSel, cantidadSel: max > 0 ? 1 : 0, max })
-    } catch (err) {
-      setDrawer(null)
-      setUserSuccess?.(err?.code || err?.message || 'repeat')
-    }
-  }
-
-  async function enviarSolicitud() {
-    if (!drawer) return
-    if (!personal || !mySucursalId) return setUserSuccess?.('No tienes permisos')
-
-    const productoId = safeId(drawer?.producto?.__key)
-    const talla = String(drawer?.talla ?? '')
-    const desdeSucursalId = safeId(drawer?.sucursalSel)
-    const cantidad = asNumber(drawer?.cantidadSel, 0)
-    if (!productoId || !talla.trim() || !desdeSucursalId || cantidad <= 0) return setUserSuccess?.('Complete')
-
-    const max = asNumber(drawer?.stockBySucursal?.[desdeSucursalId], 0)
-    if (cantidad > max) return setUserSuccess?.('stock_insuficiente')
-
-    try {
-      setModal('Guardando')
-      const transferenciaId = generateUUID()
-      await solicitarTransferencia({
-        transferenciaId,
-        idempotencyKey: `transferencia_${transferenciaId}`,
-        desdeSucursalId,
-        haciaSucursalId: mySucursalId,
-        usuarioId: user?.uid ?? null,
-        nota: `Solicitud desde venta (${ventaId.slice(0, 8)})`,
-        items: [{ productoId, talla, cantidad }],
-      })
-      setModal('')
-      setUserSuccess?.('Se ha guardado correctamente')
-      setDrawer(null)
-    } catch (err) {
-      setModal('')
-      setUserSuccess?.(err?.code || err?.message || 'repeat')
-    }
-  }
-
   async function confirmarVenta() {
     if (confirmingRef.current) return
-    confirmingRef.current = true
-    setConfirming(true)
-
     if (!activeSucursalId) return setUserSuccess?.('Selecciona una sucursal')
     if (!cartItems.length) return setUserSuccess?.('noProduct')
     if (personal && mySucursalId && activeSucursalId !== mySucursalId) return setUserSuccess?.('No tienes permisos')
+
+    confirmingRef.current = true
+    setConfirming(true)
 
     const items = cartItems.map((it) => ({
       productoId: it.productoId,
@@ -744,27 +679,19 @@ export default function Page() {
                                 const stock = asNumber(tallas?.[t], 0)
                                 const qty = qtyInCart(pid, t)
                                 const maxed = stock > 0 && qty >= stock
-                                const canRequest = personal && mySucursalId && stock === 0
                                 const labelT = String(t).trim()
                                 const rawKey = state?.tallasMap?.[t] || t
 
                                 if (stock === 0) {
                                   return (
-                                    <button
+                                    <div
                                       key={t}
-                                      type="button"
-                                      className={`inline-flex h-10 w-full items-center justify-between gap-2 rounded-2xl px-3 text-[12px] font-semibold ring-1 transition active:scale-[0.99] ${canRequest ? 'bg-surface text-text ring-border/15 shadow-sm hover:bg-surface/95' : 'bg-surface-2/70 text-muted ring-border/10 opacity-70'
-                                        }`}
-                                      disabled={!canRequest}
-                                      title={canRequest ? 'Sin stock. Click para solicitar transferencia.' : 'Sin stock'}
-                                      onClick={() => {
-                                        if (canRequest) return openSolicitud(p, t)
-                                      }}
+                                      className="inline-flex h-10 w-full items-center justify-between gap-2 rounded-2xl bg-surface-2/70 px-3 text-[12px] font-semibold text-muted ring-1 ring-border/10 opacity-70"
+                                      title="Sin stock"
                                     >
                                       <span className="text-text">T{labelT}</span>
                                       <span className="text-muted">{stock}</span>
-                                      {canRequest ? <span className="ml-1 text-[11px] text-muted">Solicitar</span> : null}
-                                    </button>
+                                    </div>
                                   )
                                 }
 
@@ -1020,84 +947,7 @@ export default function Page() {
 
 
       <div className="h-24 xl:hidden" />
-
-      <Drawer
-        open={Boolean(drawer)}
-        title="Solicitar transferencia"
-        subtitle={drawer ? `${drawer.producto?.marca || ''} ${drawer.producto?.modelo || ''} - Talla ${String(drawer.talla || '').trim()}` : ''}
-        onClose={() => setDrawer(null)}
-        footer={
-          <div className="flex items-center justify-end gap-2">
-            <button
-              type="button"
-              className="h-10 rounded-2xl bg-surface px-4 text-[12px] font-semibold text-text ring-1 ring-border/20 shadow-sm hover:bg-surface/95"
-              onClick={() => setDrawer(null)}
-            >
-              Cancelar
-            </button>
-            <button
-              type="button"
-              className="h-10 rounded-2xl bg-accent px-4 text-[12px] font-semibold text-black ring-1 ring-accent/30 hover:brightness-105 disabled:opacity-60"
-              disabled={!drawer?.stockBySucursal || !drawer?.sucursalSel || asNumber(drawer?.cantidadSel, 0) <= 0}
-              onClick={enviarSolicitud}
-            >
-              Enviar solicitud
-            </button>
-          </div>
-        }
-      >
-        {drawer ? (
-          <div className="space-y-4">
-            <div className="rounded-2xl bg-surface-2/60 p-4 ring-1 ring-border/15">
-              <div className="text-[13px] font-semibold text-text">Destino</div>
-              <div className="mt-1 text-[12px] text-muted">{sucursalNameById[mySucursalId] || mySucursalId}</div>
-            </div>
-
-            <div className="rounded-2xl bg-surface-2/60 p-4 ring-1 ring-border/15">
-              <div className="text-[13px] font-semibold text-text">Origen</div>
-              {!drawer.stockBySucursal ? (
-                <div className="mt-2 text-sm text-muted">Cargando...</div>
-              ) : (
-                <select
-                  className={`${inputClass()} mt-2`}
-                  value={drawer.sucursalSel}
-                  onChange={(e) => {
-                    const sucursalSel = e.target.value
-                    const max = asNumber(drawer.stockBySucursal?.[sucursalSel], 0)
-                    setDrawer((prev) => (prev ? { ...prev, sucursalSel, max, cantidadSel: max > 0 ? 1 : 0 } : prev))
-                  }}
-                >
-                  <option value="">Selecciona</option>
-                  {sucursalesArr
-                    .filter((s) => s.uuid !== mySucursalId)
-                    .map((s) => {
-                      const stock = asNumber(drawer.stockBySucursal?.[s.uuid], 0)
-                      return (
-                        <option key={s.uuid} value={s.uuid} disabled={stock <= 0}>
-                          {s.nombre} (stock {stock})
-                        </option>
-                      )
-                    })}
-                </select>
-              )}
-            </div>
-
-            <div className="rounded-2xl bg-surface-2/60 p-4 ring-1 ring-border/15">
-              <div className="text-[13px] font-semibold text-text">Cantidad</div>
-              <input
-                className={`${inputClass()} mt-2`}
-                type="number"
-                min={1}
-                max={drawer.max || 1}
-                value={drawer.cantidadSel}
-                onChange={(e) => setDrawer((prev) => (prev ? { ...prev, cantidadSel: asNumber(e.target.value, 1) } : prev))}
-                disabled={!drawer.sucursalSel}
-              />
-              {drawer.sucursalSel ? <div className="mt-2 text-[12px] text-muted">Máximo: {drawer.max}</div> : null}
-            </div>
-          </div>
-        ) : null}
-      </Drawer>
     </DataPanel>
   )
 }
+

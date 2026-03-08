@@ -113,35 +113,35 @@ export default function InventoryPage() {
     let cancelled = false
     setTotalesLoading(true)
 
-    ;(async () => {
-      try {
-        const pairs = []
-        for (const sucursalId of sucursalIds) {
-          for (const productoId of productoIds) {
-            pairs.push({ sucursalId, productoId })
+      ; (async () => {
+        try {
+          const pairs = []
+          for (const sucursalId of sucursalIds) {
+            for (const productoId of productoIds) {
+              pairs.push({ sucursalId, productoId })
+            }
           }
+
+          const values = await Promise.all(
+            pairs.map(async ({ sucursalId, productoId }) => {
+              const v = await getValue(`inventarioTotales/${sucursalId}/${productoId}/total`)
+              return { sucursalId, productoId, total: v == null ? null : Number(v) }
+            })
+          )
+
+          const next = {}
+          for (const { sucursalId, productoId, total } of values) {
+            if (!next[sucursalId]) next[sucursalId] = {}
+            next[sucursalId][productoId] = Number.isFinite(total) ? total : null
+          }
+
+          if (!cancelled) setTotales(next)
+        } catch (err) {
+          if (!cancelled) setUserSuccess?.(err?.code || err?.message || 'repeat')
+        } finally {
+          if (!cancelled) setTotalesLoading(false)
         }
-
-        const values = await Promise.all(
-          pairs.map(async ({ sucursalId, productoId }) => {
-            const v = await getValue(`inventarioTotales/${sucursalId}/${productoId}/total`)
-            return { sucursalId, productoId, total: v == null ? null : Number(v) }
-          })
-        )
-
-        const next = {}
-        for (const { sucursalId, productoId, total } of values) {
-          if (!next[sucursalId]) next[sucursalId] = {}
-          next[sucursalId][productoId] = Number.isFinite(total) ? total : null
-        }
-
-        if (!cancelled) setTotales(next)
-      } catch (err) {
-        if (!cancelled) setUserSuccess?.(err?.code || err?.message || 'repeat')
-      } finally {
-        if (!cancelled) setTotalesLoading(false)
-      }
-    })()
+      })()
 
     return () => {
       cancelled = true
@@ -250,28 +250,28 @@ export default function InventoryPage() {
 
     openedFromQueryRef.current = true
 
-    ;(async () => {
-      try {
-        const preferSucursalId = userDB?.sucursalId
-        const chosenSucursal =
-          preferSucursalId && sucursalesArr.some((s) => s.uuid === preferSucursalId)
-            ? sucursalesArr.find((s) => s.uuid === preferSucursalId)
-            : sucursalesArr[0]
+      ; (async () => {
+        try {
+          const preferSucursalId = userDB?.sucursalId
+          const chosenSucursal =
+            preferSucursalId && sucursalesArr.some((s) => s.uuid === preferSucursalId)
+              ? sucursalesArr.find((s) => s.uuid === preferSucursalId)
+              : sucursalesArr[0]
 
-        const p = await getValue(`productos/${productoId}`)
-        if (!p || !chosenSucursal?.uuid) {
-          setUserSuccess?.('Producto no encontrado')
+          const p = await getValue(`productos/${productoId}`)
+          if (!p || !chosenSucursal?.uuid) {
+            setUserSuccess?.('Producto no encontrado')
+            if (typeof window !== 'undefined') window.history.replaceState(null, '', window.location.pathname)
+            return
+          }
+
+          await openProductoDrawer({ ...p, __key: productoId }, chosenSucursal.uuid)
+        } catch (err) {
+          setUserSuccess?.(err?.code || err?.message || 'repeat')
+        } finally {
           if (typeof window !== 'undefined') window.history.replaceState(null, '', window.location.pathname)
-          return
         }
-
-        await openProductoDrawer({ ...p, __key: productoId }, chosenSucursal.uuid)
-      } catch (err) {
-        setUserSuccess?.(err?.code || err?.message || 'repeat')
-      } finally {
-        if (typeof window !== 'undefined') window.history.replaceState(null, '', window.location.pathname)
-      }
-    })()
+      })()
   }, [query, sucursales, sucursalesArr, userDB?.sucursalId, setUserSuccess, openProductoDrawer])
 
   useEffect(() => {
@@ -282,26 +282,26 @@ export default function InventoryPage() {
     let cancelled = false
     setFullLoading(true)
 
-    ;(async () => {
-      try {
-        const values = await Promise.all(
-          sucursalesArr.map(async (s) => {
-            const tallas = (await getValue(`inventario/${s.uuid}/${productoId}/tallas`)) || {}
-            return { sucursalId: s.uuid, tallas }
-          })
-        )
-        if (cancelled) return
-        const next = {}
-        for (const { sucursalId, tallas } of values) {
-          next[sucursalId] = tallas && typeof tallas === 'object' ? tallas : {}
+      ; (async () => {
+        try {
+          const values = await Promise.all(
+            sucursalesArr.map(async (s) => {
+              const tallas = (await getValue(`inventario/${s.uuid}/${productoId}/tallas`)) || {}
+              return { sucursalId: s.uuid, tallas }
+            })
+          )
+          if (cancelled) return
+          const next = {}
+          for (const { sucursalId, tallas } of values) {
+            next[sucursalId] = tallas && typeof tallas === 'object' ? tallas : {}
+          }
+          setFullInventario(next)
+        } catch (err) {
+          if (!cancelled) setUserSuccess?.(err?.code || err?.message || 'repeat')
+        } finally {
+          if (!cancelled) setFullLoading(false)
         }
-        setFullInventario(next)
-      } catch (err) {
-        if (!cancelled) setUserSuccess?.(err?.code || err?.message || 'repeat')
-      } finally {
-        if (!cancelled) setFullLoading(false)
-      }
-    })()
+      })()
 
     return () => {
       cancelled = true
@@ -549,10 +549,10 @@ export default function InventoryPage() {
           searchBy === 'marcaLower'
             ? 'Buscar por marca...'
             : searchBy === 'modeloLower'
-            ? 'Buscar por modelo...'
-            : searchBy === 'codigoLower'
-            ? 'Buscar por código...'
-            : 'Buscar por nombre...',
+              ? 'Buscar por modelo...'
+              : searchBy === 'codigoLower'
+                ? 'Buscar por código...'
+                : 'Buscar por nombre...',
       }}
       footer={
         <TablePager
@@ -636,7 +636,7 @@ export default function InventoryPage() {
                   <>
                     Stock actual: <span className="font-semibold text-text">{Number(detalleTotalSucursal || 0)}</span>
                   </>
-                  {drawerMode === 'compra' ? (
+                  {admin ? (drawerMode === 'compra' ? (
                     <>
                       <br />
                       Unidades a ingresar: <span className="font-semibold text-text">{compraUnidades}</span> - Costo:{' '}
@@ -653,7 +653,7 @@ export default function InventoryPage() {
                       Unidades a ingresar: <span className="font-semibold text-text">{regUnidades}</span> - Costo (si aplica):{' '}
                       <span className="font-semibold text-text">{Number(regCostoTotal || 0)}</span>
                     </>
-                  )}
+                  )) : null}
                 </div>
               </div>
             </div>
@@ -662,7 +662,9 @@ export default function InventoryPage() {
               <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                 <div>
                   <div className="text-[13px] font-semibold text-text">Detalle de sucursal</div>
-                  <div className="text-[12px] text-muted">Ver stock por talla y registrar Compra/Merma/Regularizacion (auditables).</div>
+                  <div className="text-[12px] text-muted">
+                    {admin ? 'Ver stock por talla y registrar Compra/Merma/Regularizacion (auditables).' : 'Solo lectura.'}
+                  </div>
                 </div>
                 <select
                   className="h-10 rounded-2xl bg-surface/60 px-3 text-[12px] text-text ring-1 ring-border/25 outline-none focus:ring-2 focus:ring-accent/25"
@@ -683,31 +685,33 @@ export default function InventoryPage() {
               </div>
 
               <div className="mt-4 rounded-2xl bg-surface/40 p-4 ring-1 ring-border/15">
-                  <div className="flex items-center justify-between gap-3">
-                    <div>
-                      <div className="text-[12px] font-semibold text-text">Stock por talla (sucursal)</div>
-                      <div className="text-[12px] text-muted">Solo lectura.</div>
-                    </div>
-                    {fullLoading ? <div className="text-[12px] text-muted">Cargando...</div> : null}
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <div className="text-[12px] font-semibold text-text">Stock por talla (sucursal)</div>
+                    <div className="text-[12px] text-muted">Solo lectura.</div>
                   </div>
+                  {fullLoading ? <div className="text-[12px] text-muted">Cargando...</div> : null}
+                </div>
 
-                  <div className="mt-3 flex flex-wrap gap-2">
-                    {!fullLoading && !detalleTallasSucursal.length ? (
-                      <div className="text-[12px] text-muted">Sin stock registrado en esta sucursal.</div>
-                    ) : null}
-                    {(detalleTallasSucursal || []).map(([t, n]) => (
-                      <div
-                        key={`st-${t}`}
-                        className="inline-flex items-center gap-2 rounded-xl bg-surface/60 px-3 py-2 text-[12px] font-semibold ring-1 ring-border/15"
-                      >
-                        <span className="text-muted">T{t}</span>
-                        <span className="text-text">{Number(n || 0)}</span>
-                      </div>
-                    ))}
-                  </div>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {!fullLoading && !detalleTallasSucursal.length ? (
+                    <div className="text-[12px] text-muted">Sin stock registrado en esta sucursal.</div>
+                  ) : null}
+                  {(detalleTallasSucursal || []).map(([t, n]) => (
+                    <div
+                      key={`st-${t}`}
+                      className="inline-flex items-center gap-2 rounded-xl bg-surface/60 px-3 py-2 text-[12px] font-semibold ring-1 ring-border/15"
+                    >
+                      <span className="text-muted">T{t}</span>
+                      <span className="text-text">{Number(n || 0)}</span>
+                    </div>
+                  ))}
+                </div>
               </div>
 
-                  <div className="mt-4 inline-grid grid-cols-3 rounded-2xl bg-surface/60 p-1 ring-1 ring-border/15">
+              {admin ? (
+                <>
+              <div className="mt-4 inline-grid grid-cols-3 rounded-2xl bg-surface/60 p-1 ring-1 ring-border/15">
                 <button
                   type="button"
                   className={`rounded-2xl px-3 py-2 text-[12px] font-semibold transition ${drawerMode === 'compra' ? 'bg-surface text-text shadow-sm ring-1 ring-border/20' : 'text-muted hover:bg-surface/70 hover:text-text'}`}
@@ -729,9 +733,9 @@ export default function InventoryPage() {
                 >
                   Regularizacion
                 </button>
-                  </div>
+              </div>
 
-                  <div className="mt-4 space-y-3">
+              <div className="mt-4 space-y-3">
                 {detalleLoading ? (
                   <div className="inline-flex items-center gap-2 rounded-2xl bg-surface/60 px-3 py-2 text-[12px] font-semibold text-muted ring-1 ring-border/15">
                     <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -1016,6 +1020,8 @@ export default function InventoryPage() {
                   </>
                 )}
               </div>
+                </>
+              ) : null}
             </div>
 
             <div className="order-1 rounded-3xl bg-surface/30 p-4 ring-1 ring-border/15">
@@ -1129,17 +1135,18 @@ export default function InventoryPage() {
             <th scope="col" className="min-w-[140px] px-3 py-3">
               Nombre
             </th>
-            <th scope="col" className="min-w-[90px] px-3 py-3 text-right">
+            <th scope="col" className="min-w-[90px] px-3 py-3">
               Precio
             </th>
-            <th scope="col" className="min-w-[160px] px-3 py-3">
-              Total general
-            </th>
+
             {sucursalesArr.map((s) => (
               <th key={s.uuid} scope="col" className="min-w-[160px] px-3 py-3">
                 {s.nombre}
               </th>
             ))}
+            <th scope="col" className="min-w-[160px] px-3 py-3">
+              Total general
+            </th>
           </tr>
         </THead>
         <tbody>
@@ -1170,24 +1177,10 @@ export default function InventoryPage() {
                   className="text-[13px] border-b border-transparent hover:bg-surface/50 odd:bg-surface/20 even:bg-surface/10"
                 >
                   <td className="min-w-[50px] px-3 py-4 text-text align-middle">{cursor.from + index}</td>
-                  <td className="px-3 py-4 text-text">
-                    <button
-                      type="button"
-                      className="text-left font-semibold text-text hover:underline"
-                      onClick={() => openProductoDrawer(p)}
-                      title="Ver detalle"
-                    >
-                      {p?.marca}
-                    </button>
-                  </td>
+                  <td className="px-3 py-4 text-text">{p?.marca}</td>
                   <td className="px-3 py-4 text-text">{p?.modelo}</td>
                   <td className="px-3 py-4 text-text">{p?.nombre}</td>
-                  <td className="px-3 py-4 text-text text-right">{Number(p?.precio || 0)}</td>
-                  <td className="px-3 py-4 text-text">
-                    <span className="inline-flex items-center rounded-xl bg-surface/60 px-3 py-2 text-[12px] font-semibold ring-1 ring-border/15">
-                      {totalesLoading ? 'Total: …' : `Total: ${totalGeneral}`}
-                    </span>
-                  </td>
+                  <td className="px-3 py-4 text-text">{Number(p?.precio || 0)}</td>
 
                   {sucursalesArr.map((s) => {
                     const total = totales?.[s.uuid]?.[productoId]
@@ -1204,6 +1197,12 @@ export default function InventoryPage() {
                       </td>
                     )
                   })}
+
+                  <td className="px-3 py-4 text-text">
+                    <span className="inline-flex items-center rounded-xl bg-surface/60 px-3 py-2 text-[12px] font-semibold ring-1 ring-border/15">
+                      {totalesLoading ? 'Total: …' : `Total: ${totalGeneral}`}
+                    </span>
+                  </td>
                 </tr>
               )
             })

@@ -40,6 +40,7 @@ export default function ProductsPage() {
   const { userDB, modal, setModal, msg, setUserSuccess, setUserItem, item } = useUser()
 
   const admin = isAdmin(userDB)
+  const columnCount = admin ? 7 : 6
 
 
 
@@ -340,7 +341,7 @@ export default function ProductsPage() {
 
       title="Productos"
 
-      subtitle="CatÃ¡logo (marca, modelo, nombre, precio)"
+      subtitle="Catalogo (marca, modelo, nombre, precio)"
 
       actions={actions}
 
@@ -447,7 +448,7 @@ export default function ProductsPage() {
 
             </th>
 
-            <th scope="col" className="min-w-[90px] px-3 py-3 text-right">
+            <th scope="col" className="min-w-[90px] px-3 py-3">
 
               Precio
 
@@ -459,11 +460,11 @@ export default function ProductsPage() {
 
             </th>
 
-            <th scope="col" className="min-w-[200px] px-3 py-3 text-center">
-
-               Accion
-
-            </th>
+            {admin ? (
+              <th scope="col" className="min-w-[200px] px-3 py-3 text-center">
+                Accion
+              </th>
+            ) : null}
 
           </tr>
 
@@ -475,7 +476,7 @@ export default function ProductsPage() {
 
             <tr>
 
-              <td colSpan={8} className="px-4 py-10 text-center text-[13px] text-muted">
+              <td colSpan={columnCount} className="px-4 py-10 text-center text-[13px] text-muted">
 
                 Cargando...
 
@@ -487,7 +488,7 @@ export default function ProductsPage() {
 
             <tr>
 
-              <td colSpan={8} className="px-4 py-10 text-center text-[13px] text-muted">
+              <td colSpan={columnCount} className="px-4 py-10 text-center text-[13px] text-muted">
 
                 Sin resultados.
 
@@ -562,131 +563,74 @@ export default function ProductsPage() {
                     {admin ? (
 
                       <input
-
                         className="h-9 w-full rounded-xl bg-surface/60 px-3 text-[12px] text-text ring-1 ring-border/15 outline-none focus:ring-2 focus:ring-accent/25"
-
                         defaultValue={p.nombre || ''}
-
                         onChange={(e) => setDraftField(productoId, 'nombre', e.target.value)}
-
                       />
-
                     ) : (
-
                       p.nombre
-
                     )}
-
                   </td>
 
                   <td className="px-3 py-3 text-text">
-
                     {admin ? (
-
                       <input
-
                         className="h-9 w-full rounded-xl bg-surface/60 px-3 text-[12px] text-text ring-1 ring-border/15 outline-none focus:ring-2 focus:ring-accent/25"
-
-                        defaultValue={p.codigo || ''}
-
+                        defaultValue={p.codigo || '-'}
                         onChange={(e) => setDraftField(productoId, 'codigo', e.target.value)}
-
                       />
-
                     ) : (
-
-                      p.codigo || 'â'
-
+                      p.codigo || '-'
                     )}
-
                   </td>
 
-                  <td className="px-3 py-3 text-text text-right">
-
+                  <td className="px-3 py-3 text-text">
                     {admin ? (
-
                       <input
-
                         type="number"
-
                         className="h-9 w-[120px] rounded-xl bg-surface/60 px-3 text-[12px] text-text ring-1 ring-border/15 outline-none focus:ring-2 focus:ring-accent/25 text-right"
-
                         defaultValue={Number(p.precio || 0)}
-
                         onChange={(e) => setDraftField(productoId, 'precio', Number(e.target.value))}
-
                       />
-
                     ) : (
-
                       Number(p.precio || 0)
-
                     )}
-
                   </td>
 
                   <td className="px-3 py-3">
-
                     <div className="flex items-center gap-3">
-
                       <div className="h-12 w-12 overflow-hidden rounded-xl bg-surface/40 ring-1 ring-border/15">
-
                         <img
-
                           src={urlPostImage[productoId] || p.urlImagen || p.url || '/logo.png'}
-
                           alt="Producto"
-
                           className="h-full w-full object-cover"
-
                         />
-
                       </div>
 
                       {admin ? (
-
                         <label className="cursor-pointer text-[12px] text-muted hover:text-text">
-
                           Cambiar
-
                           <input className="hidden" type="file" accept="image/*" onChange={(e) => manageInputIMG(e, productoId)} />
-
                         </label>
-
                       ) : null}
-
                     </div>
-
                   </td>
 
-                  <td className="px-3 py-3 text-center">
-
-                    {!admin ? null : (
-
+                  {admin ? (
+                    <td className="px-3 py-3 text-center">
                       <div className="flex items-center justify-center">
-
                         {d.marca != null || d.modelo != null || d.nombre != null || d.precio != null || postImage[productoId] ? (
-
                           <Button theme="Primary" styled="w-auto whitespace-nowrap" click={() => save(p)}>
-
                             Guardar
-
                           </Button>
-
                         ) : (
-
                           <Button theme="Danger" styled="w-auto whitespace-nowrap" click={() => requestDelete(p)}>
                             Eliminar
-
                           </Button>
-
                         )}
-
                       </div>
-
-                    )}
-
-                  </td>
+                    </td>
+                  ) : null}
 
                 </tr>
 

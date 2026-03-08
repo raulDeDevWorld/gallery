@@ -1,10 +1,11 @@
 'use client'
 import { useUser } from '@/context'
+import { getValue } from '@/firebase/database'
 import { useEffect } from 'react'
 import { useRouter } from 'next/navigation';
 import { usePathname } from 'next/navigation'
 export default function layout({ children }) {
-  const { user, userDB } = useUser()
+  const { user, userDB, setUserData } = useUser()
   const router = useRouter()
   const pathname = usePathname()
 
@@ -13,12 +14,34 @@ export default function layout({ children }) {
     if (userDB === undefined) return
 
     if (userDB === null) {
-      if (pathname !== '/Register') router.replace('/Register')
+      let cancelled = false
+
+      ;(async () => {
+        const fresh = await getValue(`usuarios/${user.uid}`).catch(() => null)
+        if (cancelled) return
+
+        if (fresh) {
+          setUserData(fresh)
+          return
+        }
+
+        if (pathname !== '/Register') router.replace('/Register')
+      })()
+
+      return () => {
+        cancelled = true
+      }
+    }
+
+    if (pathname !== '/') {
+      router.replace('/')
       return
     }
 
-    router.replace('/')
-  }, [user, userDB, router, pathname])
+    return () => {
+      // no-op
+    }
+  }, [user, userDB, router, pathname, setUserData])
   return (
     <main className='relative min-h-screen w-full flex flex-col items-center justify-center text-text px-4 py-10'>
       <div
@@ -41,39 +64,9 @@ export default function layout({ children }) {
       <div className='relative z-10 w-full flex justify-center'>
         {children}
       </div>
-
-      {/* <div className='relative z-10 pt-8 sm:pt-0 sm:fixed sm:top-[40px] sm:left-[40px]'>
-        <a type="button" href='#' download className="flex items-center justify-center w-48 text-white bg-white/10 rounded-xl h-14 border border-white/20 backdrop-blur hover:bg-white/15 transition-colors">
-          <div className="mr-3">
-            <svg viewBox="30 336.7 120.9 129.2" width="30">
-              <path fill="#FFD400"
-                d="M119.2,421.2c15.3-8.4,27-14.8,28-15.3c3.2-1.7,6.5-6.2,0-9.7  c-2.1-1.1-13.4-7.3-28-15.3l-20.1,20.2L119.2,421.2z">
-              </path>
-              <path fill="#FF3333"
-                d="M99.1,401.1l-64.2,64.7c1.5,0.2,3.2-0.2,5.2-1.3  c4.2-2.3,48.8-26.7,79.1-43.3L99.1,401.1L99.1,401.1z">
-              </path>
-              <path fill="#48FF48" d="M99.1,401.1l20.1-20.2c0,0-74.6-40.7-79.1-43.1  c-1.7-1-3.6-1.3-5.3-1L99.1,401.1z">
-              </path>
-              <path fill="#3BCCFF"
-                d="M99.1,401.1l-64.3-64.3c-2.6,0.6-4.8,2.9-4.8,7.6  c0,7.5,0,107.5,0,113.8c0,4.3,1.7,7.4,4.9,7.7L99.1,401.1z">
-              </path>
-            </svg>
-          </div>
-          <div>
-            <div className="text-xs">
-              Descargar
-            </div>
-            <div className="-mt-1 font-sans text-xl font-semibold">
-              APK android
-            </div>
-          </div>
-        </a>
-      </div> */}
-
     </main>
   )
 }
-
 
 
 

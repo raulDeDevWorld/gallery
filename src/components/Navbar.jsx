@@ -219,17 +219,6 @@ export default function Navbar({ rol }) {
         <div className="space-y-2">
           <button
             type="button"
-            onClick={redirectSupport}
-            className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-[13px] font-semibold text-sidebar-muted transition hover:bg-sidebar-surface/50 hover:text-sidebar-text focus-visible:ring-2 focus-visible:ring-accent/35"
-          >
-            <span className="inline-flex h-9 w-9 items-center justify-center rounded-xl bg-sidebar-surface/60">
-              <Icon name="help" className="h-5 w-5" />
-            </span>
-            <span className="flex-1 text-left">Soporte</span>
-          </button>
-
-          <button
-            type="button"
             onClick={signOutHandler}
             className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-[13px] font-semibold text-sidebar-muted transition hover:bg-sidebar-surface/50 hover:text-sidebar-text focus-visible:ring-2 focus-visible:ring-accent/35"
           >
@@ -253,7 +242,7 @@ function useMemoNav(role) {
         { href: '/', label: 'Inventario', icon: 'inventory' }, 
         { href: '/Catalogo', label: 'Catálogo', icon: 'services' },
         { href: '/Sucursales', label: 'Sucursales', icon: 'branches' }, 
-        { href: '/Personal', label: 'Personal', icon: 'users' }, 
+        ...(admin ? [{ href: '/Personal', label: 'Personal', icon: 'users' }] : []),
         ...(admin ? [{ href: '/Reportes', label: 'Reporte histórico', icon: 'reports' }] : []),
       ], 
     }, 

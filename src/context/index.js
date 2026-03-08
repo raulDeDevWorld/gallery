@@ -38,6 +38,7 @@ function resolveToastConfig(value) {
 		'Se ha guardado correctamente': { type: 'success', message: 'Guardado correctamente' },
 		'Eliminado correctamente': { type: 'success', message: 'Eliminado correctamente' },
 		'Actualizado correctamente': { type: 'success', message: 'Actualizado correctamente' },
+		'Transferencia anulada': { type: 'success', message: 'Transferencia anulada' },
 		RegisterComplete: { type: 'success', message: 'Registro completado' },
 		StaffRequestSent: { type: 'success', message: 'Solicitud enviada. Espera aprobación del admin' },
 	}
@@ -336,7 +337,7 @@ export function UserProvider({ children }) {
 		<UserContext.Provider value={value} >
 			<Toaster
 				position="top-right"
-				containerStyle={{ zIndex: 1000000000 }}
+				containerStyle={{ zIndex: 1000000010 }}
 				toastOptions={{
 					duration: 5000,
 					style: {

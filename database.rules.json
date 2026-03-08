@@ -89,16 +89,20 @@
       ".write": false,
       ".indexOn": ["desdeSucursalId", "haciaSucursalId", "estado", "creadoEn", "transferidoEn"],
       "$transferenciaId": {
-        ".write": "auth != null && (root.child('usuarios').child(auth.uid).child('rol').val() === 'admin' || root.child('usuarios').child(auth.uid).child('rol').val() === 'personal') && ( (!data.exists() && newData.child('estado').val() === 'pendiente' && newData.child('creadoPorUsuarioId').val() === auth.uid && newData.child('creadoEn').isNumber() && (root.child('usuarios').child(auth.uid).child('rol').val() === 'admin' || root.child('usuarios').child(auth.uid).child('sucursalId').val() === newData.child('haciaSucursalId').val()) ) || (data.exists() && data.child('estado').val() === 'pendiente' && newData.child('estado').val() === 'transferido' && newData.child('transferidoPorUsuarioId').val() === auth.uid && newData.child('transferidoEn').isNumber() && (root.child('usuarios').child(auth.uid).child('rol').val() === 'admin' || root.child('usuarios').child(auth.uid).child('sucursalId').val() === data.child('desdeSucursalId').val()) ) )",
+        ".write": "auth != null && (root.child('usuarios').child(auth.uid).child('rol').val() === 'admin' || root.child('usuarios').child(auth.uid).child('rol').val() === 'personal') && ( (!data.exists() && newData.child('estado').val() === 'pendiente' && newData.child('creadoPorUsuarioId').val() === auth.uid && newData.child('creadoEn').isNumber() && (root.child('usuarios').child(auth.uid).child('rol').val() === 'admin' || root.child('usuarios').child(auth.uid).child('sucursalId').val() === newData.child('desdeSucursalId').val()) ) || (data.exists() && data.child('estado').val() === 'pendiente' && newData.child('estado').val() === 'transferido' && newData.child('transferidoPorUsuarioId').val() === auth.uid && newData.child('transferidoEn').isNumber() && (root.child('usuarios').child(auth.uid).child('rol').val() === 'admin' || root.child('usuarios').child(auth.uid).child('sucursalId').val() === data.child('desdeSucursalId').val()) ) || (data.exists() && data.child('estado').val() === 'pendiente' && newData.child('estado').val() === 'anulada' && newData.child('anuladoPorUsuarioId').val() === auth.uid && newData.child('anuladoEn').isNumber() && (root.child('usuarios').child(auth.uid).child('rol').val() === 'admin' || root.child('usuarios').child(auth.uid).child('sucursalId').val() === data.child('desdeSucursalId').val()) ) )",
         "desdeSucursalId": { ".validate": "newData.isString()" },
         "haciaSucursalId": { ".validate": "newData.isString()" },
         "estado": {
-          ".validate": "newData.val() === 'pendiente' || newData.val() === 'transferido'"
+          ".validate": "newData.val() === 'pendiente' || newData.val() === 'transferido' || newData.val() === 'anulada'"
         },
         "creadoPorUsuarioId": { ".validate": "newData.val() === null || newData.isString()" },
         "creadoEn": { ".validate": "newData.isNumber()" },
         "transferidoPorUsuarioId": { ".validate": "newData.val() === null || newData.isString()" },
         "transferidoEn": { ".validate": "newData.val() === null || newData.isNumber()" },
+        "anuladoPorUsuarioId": { ".validate": "newData.val() === null || newData.isString()" },
+        "anuladoEn": { ".validate": "newData.val() === null || newData.isNumber()" },
+        "anuladoMotivo": { ".validate": "newData.val() === null || newData.isString()" },
+        "anuladoNota": { ".validate": "newData.val() === null || newData.isString()" },
         "nota": { ".validate": "newData.val() === null || newData.isString()" },
         "items": {
           "$productoId": {
