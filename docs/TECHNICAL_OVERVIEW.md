@@ -1,232 +1,501 @@
-# Documentacion Tecnica - Flujo del Sistema (Frontend + Firebase RTDB)
+# Documentacion Tecnica - Flujo del Sistema
 
-Fecha: 2026-03-06
+Fecha: 2026-03-08
 
-Este documento explica el flujo tecnico (datos + operaciones) del sistema de tienda (catalogo, inventario por lotes, ventas, transferencias y reportes).
+Este documento describe el funcionamiento tecnico actual del frontend con Firebase Realtime Database.
+El foco es explicar:
 
-Nota: Para el esquema detallado de nodos, ver `docs/DB_SCHEMA.md`.
+- cuales son las fuentes de verdad
+- como se mueve el inventario
+- como se calcula el costo
+- como se alimentan los reportes
+- que piezas son operativas y cuales son auxiliares
 
-## 1) Arquitectura (resumen)
+Nota:
+- Para el detalle de nodos, ver `docs/DB_SCHEMA.md`.
 
-- App: Next.js (App Router) con componentes "client".
-- Auth: Firebase Auth.
-- Base de datos: Firebase Realtime Database (RTDB).
-- Operaciones criticas: se ejecutan desde el frontend mediante funciones en `src/firebase/ops.js`.
-- Seguridad: reglas RTDB en `database.rules.json`.
+## 1. Arquitectura actual
 
-Objetivo del diseno:
-- Inventario por talla siempre disponible en lectura rapida.
-- Costo real por lotes (FIFO) al confirmar ventas, mermas y transferencias.
-- Auditoria: todo cambio relevante genera un registro (venta, compra, merma, regularizacion, transferencia).
-- Reporte historico eficiente: agregado diario por sucursal para evitar sumar miles de ventas.
+- App: Next.js App Router
+- Estado global: `src/context/index.js`
+- Auth: Firebase Auth
+- Base de datos: Firebase Realtime Database
+- Operaciones criticas: `src/firebase/ops.js`
+- Lecturas auxiliares: `src/firebase/database.js`
 
-## 2) Roles y permisos (modelo)
+Decision importante del diseño:
+- la logica critica vive en el frontend
+- las operaciones escriben multipath updates y transacciones directamente sobre RTDB
 
-Nodo principal: `usuarios/{uid}`
+## 2. Roles
+
+Nodo principal:
+- `usuarios/{uid}`
 
 Roles usados:
-- `admin`: gestiona catalogo, sucursales, y tiene acceso completo a reportes.
-- `personal`: opera en una sucursal asignada.
-- `cliente`: acceso limitado (segun UI).
+- `admin`
+- `personal`
+- `cliente`
 
-Campos importantes:
-- `usuarios/{uid}/rol`
-- `usuarios/{uid}/sucursalId`
+Campos relevantes:
+- `rol`
+- `sucursalId`
+- `sucursalNombre`
 
-## 3) Nodos y "fuentes de verdad"
+Resumen funcional:
+- `admin`: opera catalogo, sucursales, personal, inventario, transferencias y reportes
+- `personal`: opera ventas y transferencias sobre su sucursal; inventario queda en consulta
+- `cliente`: no usa el dashboard operativo
 
-Fuentes de verdad:
-- Stock actual por sucursal/talla: `inventario/{sucursalId}/{productoId}/tallas/{talla}`
-- Costo por lotes (FIFO): `lotesCompra/{sucursalId}/{productoId}/{talla}/{loteId}`
-- Indice de lotes activos (saldo > 0): `lotesCompraActivos/{...}/{loteId} = creadoEn`
-- Ventas: `ventas/{ventaId}` (incluye snapshot `consumoLotes`)
-- Compras/reposiciones: `compras/{compraId}` + `comprasPorSucursal/{sid}/{compraId}`
-- Movimientos (auditoria): `movimientosInventario/{movId}` + `movimientosPorSucursal/{sid}/{movId}`
-- Transferencias: `transferencias/{transferenciaId}`
-- Reporte agregado: `reportes/ventasPorSucursalDia/{sid}/{yyyymmdd}`
+## 3. Fuentes de verdad
 
-Caches/indices para performance:
-- `inventarioTotales/{sid}/{pid}`: total por producto/sucursal.
-- `ventasPorSucursal/{sid}/{ventaId}`: listar ventas por rango (orderByChild creadoEn).
-- `comprasPorSucursal/{sid}/{compraId}`: listar compras por rango (orderByChild creadoEn).
-- `movimientosPorSucursal/{sid}/{movId}`: listar mermas/regularizaciones/transferencias por rango (orderByChild creadoEn).
+### 3.1 Productos
 
-## 4) Invariantes de consistencia (importante)
+Nodo principal:
+- `productos/{productoId}`
 
-Regla mental (para mantener reportes correctos):
-- NO editar inventario "a mano". El stock cambia solo por operaciones auditables:
-  - compra (lotes)
-  - venta (salida)
-  - merma (salida)
-  - regularizacion (entrada con lote tipo regularizacion)
-  - transferencia (salida origen + entrada destino)
-- Las salidas que impactan costo (venta/merma/transferencia) consumen lotes FIFO y guardan snapshot del consumo.
-- Si falta costo (stock viejo sin lotes), el sistema marca `costoIncompleto` para reportes ("Sin costo").
+Contiene:
+- marca
+- modelo
+- nombre
+- codigo
+- precio
+- urlImagen
+- campos normalizados:
+  - `marcaLower`
+  - `modeloLower`
+  - `nombreLower`
+  - `codigoLower`
 
-## 5) Flujos principales (operaciones y efectos)
+Indice auxiliar:
+- `productosPorMarca/{marcaLower}/{productoId} = true`
 
-### 5.1 Catalogo (productos)
+Importante:
+- hoy ese indice se sigue manteniendo en escritura, pero la app no lo usa para leer
+- las busquedas reales se hacen directamente sobre `productos` usando `marcaLower`, `modeloLower`, `nombreLower` y `codigoLower`
 
-UI: `src/features/products/ProductsPage.jsx`
+Conclusion tecnica:
+- `productos` es la fuente real
+- `productosPorMarca` es un indice legado o redundante en el estado actual
 
-Datos:
-- `productos/{productoId}`: datos del producto + campos lower para busqueda.
-- `productosPorMarca/{marcaLower}/{productoId} = true`: indice por marca.
+## 3.2 Inventario actual
+
+Stock por talla:
+- `inventario/{sucursalId}/{productoId}/tallas/{talla}`
+
+Totales por producto:
+- `inventarioTotales/{sucursalId}/{productoId}`
+
+Estos nodos representan la foto viva del inventario.
+
+## 3.3 Lotes y costo FIFO
+
+Lotes:
+- `lotesCompra/{sucursalId}/{productoId}/{talla}/{loteId}`
+
+Indice de lotes con saldo:
+- `lotesCompraActivos/{sucursalId}/{productoId}/{talla}/{loteId} = creadoEn`
+
+Cada lote puede tener origen identificado por:
+- `sourceType`
+- `sourceId`
+- `sourceMovimientoId`
+
+Orígenes actuales:
+- `compra`
+- `regularizacion`
+- `transferencia_entrada`
+
+## 3.4 Trazabilidad por lote
+
+Nodo nuevo relevante:
+- `movimientosPorLote/{sucursalId}/{productoId}/{talla}/{loteId}/{traceId}`
+
+Este nodo guarda trazas de entrada y salida por lote.
+
+Tipos que hoy registra el sistema:
+- entrada por compra
+- entrada por regularizacion
+- entrada por transferencia
+- salida por venta
+- salida por merma
+- salida por transferencia
+- reverso por anulacion de venta
+
+Esto resuelve una limitacion anterior:
+- antes se inferia el consumo de un lote solo con `cantidadInicial - cantidadDisponible`
+- ahora existe trazabilidad explicita del origen y consumo del lote
+
+## 3.5 Ventas
+
+Nodo principal:
+- `ventas/{ventaId}`
+
+Indices auxiliares:
+- `ventasPorSucursal/{sucursalId}/{ventaId}`
+- `reportes/ventasPorSucursalDia/{sucursalId}/{yyyymmdd}`
+
+La venta guarda:
+- items
+- total
+- metodoPago
+- costoTotal
+- margenBruto
+- `consumoLotes`
+- `costoIncompleto` cuando no se pudo determinar costo completo
+
+## 3.6 Compras
+
+Nodo principal:
+- `compras/{compraId}`
+
+Indice:
+- `comprasPorSucursal/{sucursalId}/{compraId}`
+
+Sirve como historial de reposiciones cargadas desde Inventario.
+
+## 3.7 Movimientos de inventario
+
+Nodo principal:
+- `movimientosInventario/{movId}`
+
+Indice:
+- `movimientosPorSucursal/{sucursalId}/{movId}`
+
+Tipos usados actualmente:
+- `compra`
+- `venta_salida`
+- `merma`
+- `regularizacion`
+- `transferencia_salida`
+- `transferencia_entrada`
+- `transferencia_anulada`
+- otros ajustes segun operacion
+
+## 3.8 Transferencias
+
+Nodo principal:
+- `transferencias/{transferenciaId}`
+
+Estados:
+- `pendiente`
+- `transferido`
+- `anulada`
+
+## 4. Invariantes de consistencia
+
+Estas reglas resumen la logica del sistema:
+
+1. El inventario no debe editarse manualmente.
+2. Todo cambio de stock debe pasar por una operacion auditable.
+3. Las salidas con impacto de costo consumen lotes FIFO.
+4. Las entradas que deben participar en FIFO futuro crean lotes.
+5. Las anulaciones no borran historia; hacen reversos auditables.
+6. El reporte historico y el stock actual no son lo mismo.
+
+Interpretacion:
+- historico = movimientos ocurridos en un rango
+- stock actual = foto viva actual desde `inventario` e `inventarioTotales`
+
+## 5. Flujos operativos principales
+
+## 5.1 Catalogo
+
+UI:
+- `src/features/products/ProductsPage.jsx`
+- `src/app/(with-auth)/Servicios/Agregar/page.jsx`
 
 Operacion:
-- Guardado/edicion se hace con update multi-path para mantener indices (ver `src/firebase/ops.js`, ej. `guardarProducto()` si existe en el proyecto).
+- `guardarProducto()`
+- `eliminarProducto()`
 
-Riesgo tipico:
-- Si cambia la marca de un producto, hay que actualizar `productosPorMarca` (borrar indice anterior y crear el nuevo), o queda "duplicado" en busqueda por marca.
+`guardarProducto()` hace:
+- normaliza texto
+- recalcula `marcaLower`, `modeloLower`, `nombreLower`, `codigoLower`
+- escribe `productos/{id}`
+- mantiene `productosPorMarca`
 
-### 5.2 Compra / Reposicion (crea lotes)
+`eliminarProducto()` hace:
+- borra `productos/{id}`
+- borra su entrada en `productosPorMarca`
 
-UI: Inventario (drawer por producto y sucursal)
-- `src/features/inventory/InventoryPage.jsx` (modo `compra`)
+Riesgo actual:
+- `productosPorMarca` solo es consistente si toda escritura de productos pasa por estas funciones
 
-Operacion: `registrarCompraInventarioProductoSucursal()` en `src/firebase/ops.js`
+## 5.2 Compra / reposicion
 
-Efectos:
-- Incrementa `inventario/{sid}/{pid}/tallas/*` (transaction).
-- Actualiza `inventarioTotales/{sid}/{pid}`.
-- Crea lotes por talla:
-  - `lotesCompra/{sid}/{pid}/{talla}/{loteId}`
-  - agrega a `lotesCompraActivos/.../{loteId} = creadoEn`
-- Registra auditoria:
-  - `compras/{compraId}`
-  - `comprasPorSucursal/{sid}/{compraId}`
-  - `movimientosInventario/compra_{compraId}`
+UI:
+- `src/features/inventory/InventoryPage.jsx` en modo `compra`
 
-Correccion de errores:
-- "Anular reposicion" es posible solo si no se consumio nada del lote (lotes "nuevos").
-  - Implementacion: `anularReposicionCompra()` en `src/firebase/ops.js`.
-
-### 5.3 Venta (consumo FIFO automatico)
-
-UI: `src/app/(with-auth)/RegistrarVenta/page.jsx` (carrito por talla).
-
-Operacion: `registrarVenta()` en `src/firebase/ops.js`
+Operacion:
+- `registrarCompraInventarioProductoSucursal()`
 
 Efectos:
-- Consume lotes FIFO desde `lotesCompraActivos` + `lotesCompra`.
-- Descuenta `inventario` y actualiza `inventarioTotales`.
-- Guarda la venta con snapshot de costo:
-  - `ventas/{ventaId}` con `consumoLotes`, `costoTotal`, `margenBruto`, `costoIncompleto`.
-- Escribe vista por sucursal:
-  - `ventasPorSucursal/{sid}/{ventaId}`
-- Escribe auditoria:
-  - `movimientosInventario/venta_{ventaId}` (tipo `venta_salida`)
-- Actualiza reportes agregados:
-  - `reportes/ventasPorSucursalDia/{sid}/{yyyymmdd}`
+- incrementa `inventario`
+- actualiza `inventarioTotales`
+- crea lotes en `lotesCompra`
+- agrega lotes activos en `lotesCompraActivos`
+- registra compra en `compras` y `comprasPorSucursal`
+- registra movimiento de inventario
+- registra trazabilidad por lote con `sourceType: 'compra'`
 
-Correccion de errores:
-- No se borra la venta. Se usa "Anular venta" (reverso auditable).
-  - Implementacion: `anularVenta()` en `src/firebase/ops.js`
-  - Revierte consumo FIFO (devuelve a lotes) + devuelve stock + ajusta reportes/vistas.
+Correccion:
+- existe `anularReposicionCompra()`
+- solo aplica cuando el lote sigue intacto y no ha sido consumido
 
-### 5.4 Merma (salida con costo, no es venta)
+## 5.3 Venta
 
-UI: Inventario (drawer) modo `merma`.
+UI:
+- `src/app/(with-auth)/RegistrarVenta/page.jsx`
 
-Operacion: `registrarMermaInventarioProductoSucursal()` en `src/firebase/ops.js`
+Operacion:
+- `registrarVenta()`
 
 Efectos:
-- Consume FIFO (como venta) para calcular costo de perdida.
-- Descuenta inventario.
-- Registra `movimientosInventario/{movId}` tipo `merma` con `consumoLotes` y `costoTotal`.
-- Registra `movimientosPorSucursal/{sid}/{movId}` para reportes por fecha.
+- valida stock actual
+- consume lotes FIFO
+- descuenta `inventario`
+- actualiza `inventarioTotales`
+- guarda venta en `ventas`
+- escribe `ventasPorSucursal`
+- actualiza `reportes/ventasPorSucursalDia`
+- registra movimiento `venta_salida`
+- registra trazabilidad por lote en `movimientosPorLote`
 
-Por que no se registra como "venta con precio 0":
-- Porque contamina KPIs (cantidad de ventas, ticket, etc).
-- Merma se reporta separado como salida sin ingreso.
+Cambio importante respecto a versiones anteriores:
+- `Registrar venta` ya no solicita transferencias
+- hoy solo registra ventas
 
-### 5.5 Regularizacion (entrada auditable)
+Correccion:
+- `anularVenta()`
 
-UI: Inventario (drawer) modo `regularizacion`.
+Efecto de anular:
+- devuelve stock
+- revierte consumo FIFO
+- ajusta vistas e historicos relacionados
+- agrega traza de reverso por lote
 
-Operacion: `registrarRegularizacionInventarioProductoSucursal()` en `src/firebase/ops.js`
+## 5.4 Merma
+
+UI:
+- `src/features/inventory/InventoryPage.jsx` en modo `merma`
+
+Operacion:
+- `registrarMermaInventarioProductoSucursal()`
 
 Efectos:
-- Incrementa inventario.
-- Crea lote(s) tipo `regularizacion` para mantener consistencia FIFO a futuro.
-  - Si costo es desconocido, se marca `costoDesconocido` y el reporte lo tratara como "Sin costo" cuando aplique.
-- Registra `movimientosInventario/reg_{id}` y `movimientosPorSucursal/{sid}/reg_{id}`.
+- consume lotes FIFO
+- descuenta inventario
+- actualiza totales
+- registra movimiento tipo `merma`
+- registra `consumoLotes`
+- registra salidas por lote en `movimientosPorLote`
 
-### 5.6 Transferencias (solicitud + confirmacion)
+Interpretacion de negocio:
+- merma es salida de stock sin ingreso
+- no debe tratarse como venta
 
-UI: `src/app/(with-auth)/Transferencias/page.jsx`
+## 5.5 Regularizacion
+
+UI:
+- `src/features/inventory/InventoryPage.jsx` en modo `regularizacion`
+
+Operacion:
+- `registrarRegularizacionInventarioProductoSucursal()`
+
+Efectos:
+- incrementa inventario
+- actualiza totales
+- crea lotes con `sourceType: 'regularizacion'`
+- registra movimiento tipo `regularizacion`
+- registra entrada por lote en `movimientosPorLote`
+
+Nota:
+- si el costo no se informa, puede aparecer como costo desconocido en reportes
+
+## 5.6 Transferencias
+
+UI:
+- `src/app/(with-auth)/Transferencias/page.jsx`
+
+Operaciones:
+- `solicitarTransferencia()`
+- `transferirTransferencia()`
+- `anularTransferencia()`
 
 Modelo:
-- `transferencias/{transferenciaId}` con `estado: pendiente | transferido | anulada`.
+- la solicitud crea una transferencia `pendiente`
+- confirmar la transferencia mueve stock
+- anular la deja en `anulada` sin mover stock
 
-Operaciones en `src/firebase/ops.js`:
-- `solicitarTransferencia()`: crea transferencia pendiente.
-- `transferirTransferencia()`: confirma, mueve stock y lotes (FIFO).
-- `anularTransferencia()`: anula pendiente (sin mover stock).
-
-Permisos (reglas actuales):
-- `admin`: puede solicitar, transferir y anular.
+Permisos funcionales actuales en UI:
+- `admin`: puede solicitar, transferir y anular cualquier pendiente
 - `personal`:
-  - Origen (`desdeSucursalId`): puede solicitar.
-  - Destino (`haciaSucursalId`): puede marcar transferido y puede anular.
+  - crea solicitudes con `origen = otra sucursal` y `destino = su sucursal`
+  - solo puede confirmar o anular pendientes cuyo `desdeSucursalId` coincide con su sucursal
 
-Efectos al confirmar (`transferido`):
-- Consume FIFO en origen (costo).
-- Descuenta inventario origen.
-- Incrementa inventario destino.
-- Crea lotes en destino por cada consumo (trazabilidad):
-  - lote destino referencia `transferenciaId` y `origenLoteId` (segun implementacion).
-- Registra movimientos:
-  - `movimientosInventario/transferencia_salida_*`
-  - `movimientosInventario/transferencia_entrada_*`
-  - tambien aparecen en `movimientosPorSucursal/{sid}` para reportes por fecha.
+Esto significa:
+- la pantalla de `Transferencias` es el unico punto de solicitud
+- `Registrar venta` ya no participa en ese flujo
 
-Anular transferencia:
-- Solo cuando esta `pendiente`.
-- No toca inventario ni lotes, solo marca `estado='anulada'` y registra `movimientosInventario/transferencia_anulada_{id}`.
+Efectos de `transferirTransferencia()`:
+- consume FIFO en origen
+- descuenta stock en origen
+- crea stock en destino
+- crea lotes de entrada en destino con `sourceType: 'transferencia_entrada'`
+- registra movimientos:
+  - `transferencia_salida`
+  - `transferencia_entrada`
+- registra trazas por lote en origen y destino
 
-## 6) Reportes historicos (agregado + detalle)
+Efectos de `anularTransferencia()`:
+- solo cambia estado y metadata de anulacion
+- no mueve stock
 
-UI: `src/features/reports/ReportsPage.jsx`
+## 6. Reportes
 
-Modos:
-- Vista inicial (todas las sucursales): resumen global + tabla por sucursal (ventas + reposiciones + inventario + transferencias).
-- Vista por sucursal: tabla por dia (agregado diario).
-- Detalle (click "Ver"): panel con tabs:
-  - Ventas
-  - Reposiciones
-  - Inventario (merma/regularizacion)
-  - Transferencias
+UI:
+- `src/features/reports/ReportsPage.jsx`
 
-Fuentes:
-- Agregado rapido ventas: `reportes/ventasPorSucursalDia/{sid}/{yyyymmdd}`
-- Detalle ventas: `ventasPorSucursal/{sid}` (por rango) + `ventas/{ventaId}` (solo para expandir y mostrar lotes).
-- Detalle compras: `comprasPorSucursal/{sid}`.
-- Detalle movimientos: `movimientosPorSucursal/{sid}`.
+## 6.1 Vista principal
 
-## 7) Idempotencia (anti duplicados)
+La vista principal muestra un resumen por sucursal con estas columnas:
+- `Ventas`
+- `Reposiciones`
+- `Ajustes`
+- `Transferencias`
+- `Stock actual`
+- `Accion`
 
-Nodo: `idempotencias/{key}`
+Esto reemplaza el esquema viejo donde `Inventario` mezclaba demasiados conceptos.
 
-Se usa para evitar duplicados por doble click o mala red, especialmente en:
-- registrarVenta
-- transferirTransferencia
-- anularVenta
-- solicitarTransferencia / anularTransferencia (segun implementacion)
+## 6.2 Detalle por sucursal
 
-## 8) Checklist tecnico (prod readiness)
+Tabs actuales:
+- `ventas`
+- `compras`
+- `ajustes`
+- `transferencias`
+- `stock`
 
-Datos y consistencia:
-- [ ] Ninguna UI permite editar `inventario/*` directamente (solo lectura).
-- [ ] Compra crea lotes y actualiza indices activos.
-- [ ] Venta/Merma/Transferencia consumen FIFO y guardan snapshot (`consumoLotes`).
-- [ ] Reversos existen: anular venta, anular reposicion (condicional), anular transferencia (pendiente).
+Etiquetas visibles:
+- `Ventas`
+- `Reposiciones`
+- `Ajustes`
+- `Transferencias`
+- `Stock actual`
 
-Seguridad:
-- [ ] `database.rules.json` cubre estados de transferencia (pendiente/transferido/anulada) y transiciones validas.
-- [ ] Lecturas de `usuarios/{uid}` no fallan (evitar `permission_denied` en guard de rutas).
+## 6.3 Fuentes usadas por reporte
 
-Performance/costos:
-- [ ] Reporte agregado se usa para rangos largos.
-- [ ] Indices `.indexOn` definidos donde se usa `orderByChild` (ventasPorSucursal, comprasPorSucursal, movimientosPorSucursal).
+Ventas:
+- `reportes/ventasPorSucursalDia`
+- `ventasPorSucursal`
+- `ventas/{ventaId}`
 
+Reposiciones:
+- `comprasPorSucursal`
+- `compras/{compraId}`
+- `movimientosPorLote` para desglosar consumo del lote por tipo
+
+Ajustes:
+- `movimientosPorSucursal`
+- `movimientosInventario/{movId}`
+
+Transferencias:
+- `movimientosPorSucursal`
+- `movimientosInventario/{movId}`
+- `transferencias/{transferenciaId}` cuando hace falta enriquecer detalle
+
+Stock actual:
+- `inventarioTotales/{sucursalId}`
+- `inventario/{sucursalId}/{productoId}/tallas`
+
+## 6.4 Diferencia importante: historico vs stock actual
+
+El reporte mezcla dos capas distintas y eso es intencional:
+
+- `Ventas`, `Reposiciones`, `Ajustes`, `Transferencias`
+  - dependen del rango de fechas
+  - son historicos
+
+- `Stock actual`
+  - no depende del rango
+  - es una foto viva del inventario actual
+
+Esto es clave para no interpretar mal los numeros.
+
+## 6.5 Exportacion
+
+El detalle puede exportar hojas separadas para:
+- Ventas
+- Reposiciones
+- Ajustes
+- Transferencias
+- Stock actual
+
+## 7. Idempotencia
+
+Nodo:
+- `idempotencias/{key}`
+
+Se usa para reducir duplicados por doble click o mala red.
+
+Operaciones donde importa especialmente:
+- venta
+- anulacion de venta
+- solicitud de transferencia
+- confirmacion de transferencia
+- anulacion de transferencia
+
+## 8. Estado actual de la consistencia tecnica
+
+## 8.1 Puntos fuertes
+
+- inventario actual y costo FIFO estan bien separados
+- ventas, mermas y transferencias registran consumo por lote
+- regularizaciones ya crean lotes auditables
+- transferencias tienen historial y estados claros
+- reportes ya distinguen `Ajustes` y `Stock actual`
+
+## 8.2 Limitaciones reales
+
+- la logica critica sigue viviendo en frontend
+- el sistema depende de que todas las escrituras usen `ops.js`
+- `productosPorMarca` se mantiene, pero no se usa en lectura
+- datos viejos pueden no tener trazabilidad completa por lote
+- por eso algunos historicos antiguos pueden caer en categorias tipo `Sin costo` o `Sin traza`
+
+## 8.3 Implicacion para desarrollo futuro
+
+Si se agregan nuevas operaciones:
+- deben actualizar inventario
+- deben actualizar lotes si afectan costo futuro
+- deben registrar movimiento de inventario
+- idealmente deben registrar `movimientosPorLote`
+
+Si se agregan nuevas pantallas de catalogo:
+- o se sigue usando `productos` como fuente unica de busqueda
+- o se decide formalmente usar/eliminar `productosPorMarca`
+
+## 9. Checklist tecnico actualizado
+
+Datos:
+- [ ] Ninguna pantalla escribe stock directo fuera de `ops.js`
+- [ ] Compra, venta, merma, regularizacion y transferencia dejan rastro auditable
+- [ ] Las entradas que deben costear futuro crean lotes
+- [ ] Las salidas con costo registran consumo FIFO y trazabilidad por lote
+
+Reportes:
+- [ ] `Reposiciones` se interpreta como compras
+- [ ] `Ajustes` se interpreta como mermas + regularizaciones
+- [ ] `Stock actual` se interpreta como foto viva
+- [ ] Transferencias se revisan separadas de ventas y ajustes
+
+Producto:
+- [ ] Toda escritura de productos pasa por `guardarProducto()`
+- [ ] Si `productosPorMarca` no se va a usar, conviene retirarlo del diseño
+
+Operaciones:
+- [ ] `Registrar venta` se mantiene enfocado solo en ventas
+- [ ] `Transferencias` sigue siendo el unico punto de solicitud
+- [ ] Reversos se hacen con anulaciones, no borrando datos

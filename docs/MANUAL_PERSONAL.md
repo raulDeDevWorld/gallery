@@ -1,197 +1,192 @@
-# Manual de Uso (Personal de Sucursal)
+# Manual de Uso para Personal de Sucursal
 
-Fecha: 2026-03-06
+Fecha: 2026-03-08
 
-Este manual es para el rol `personal` (trabajo diario). Explica como operar sin "romper" inventario ni reportes.
+Este manual explica, de forma simple, qué puede hacer el rol `personal` y cómo usar la app correctamente en el trabajo diario.
 
-Regla principal:
-- NO se edita stock a mano. Todo cambio se registra como evento: Compra, Venta, Merma, Regularizacion o Transferencia.
+## Idea principal
 
-## 1) Ingreso al sistema
+Tu trabajo como `personal` es operar, no corregir stock manualmente.
 
-1) Inicia sesion.
-2) Si el sistema te pide completar registro, llena los datos solicitados.
-3) Verifica que tu usuario tenga una sucursal asignada (lo hace un admin).
+Usa cada sección para lo que fue diseñada:
+- `Inventario`: consultar stock
+- `Registrar venta`: vender
+- `Transferencias`: solicitar movimientos entre sucursales
 
-Si no ves nada o no puedes operar:
-- Revisa que tu rol sea `personal` y que exista `sucursalId` en tu perfil.
+No debes usar flujos improvisados para “arreglar” inventario.
 
-## 2) Catalogo (solo consulta)
+## 1. Qué puede hacer el personal
 
-Ruta: Catalogo / Productos
+El rol `personal` usa principalmente:
+- `Inventario`
+- `Catálogo`
+- `Registrar venta`
+- `Transferencias`
 
-Para buscar:
-- Usa busqueda por Marca / Modelo / Nombre / Codigo.
-- Selecciona el producto para ver informacion.
+En general:
+- puede consultar productos y stock
+- puede registrar ventas
+- puede solicitar transferencias
+- no administra usuarios
+- no administra catálogo
+- no debe registrar compras, mermas o regularizaciones
 
-Nota:
-- El personal normalmente no edita catalogo (eso es para admin).
+## 2. Antes de empezar
 
-## 3) Inventario (stock por talla + registrar eventos)
+Antes de trabajar, revisa esto:
 
-Ruta: Inventario
+1. Tu cuenta debe tener rol `personal`.
+2. Debes tener una sucursal asignada.
+3. Debes poder entrar al panel sin ser enviado al registro.
 
-Como ver stock:
-1) Busca el producto.
-2) Abre el detalle del producto.
-3) Selecciona la sucursal.
-4) En "Stock por talla (sucursal)" veras las tallas con su cantidad (solo lectura).
+Si no puedes operar:
+- pide al admin que revise tu rol y tu sucursal
 
-Dentro del detalle hay 3 modos:
+## 3. Inventario
 
-### A) Compra (lotes) - Para ingresar stock comprado
+Ruta: `Inventario`
 
-Cuando usarlo:
-- Llego mercaderia (reposicion).
-
-Pasos:
-1) Selecciona "Compra (lotes)".
-2) Llena Proveedor (opcional) y Nota (opcional).
-3) Para cada talla, ingresa:
-   - Talla
-   - Cantidad
-   - Costo unitario
-4) Confirma.
-
-Que hace el sistema:
-- Suma al inventario.
-- Crea lotes por talla (costo FIFO).
-- Deja rastro en reportes.
-
-Errores comunes:
-- Si te equivocas en costo/tallas, no borres nada: avisa al admin.
-  - Existe "Anular reposicion" solo si ningun lote se consumio (cuando esta "nuevo").
-
-### B) Merma - Para stock perdido/roto/faltante
-
-Cuando usarlo:
-- Producto roto, extravio, merma real.
+Aquí consultas stock.
 
 Pasos:
-1) Selecciona "Merma".
-2) Elige motivo (ej: roto, perdido, etc).
-3) Ingresa tallas y cantidades a descontar.
-4) Confirma.
+1. Busca el producto.
+2. Abre el detalle.
+3. Revisa stock por talla.
+4. Revisa en qué sucursales hay disponibilidad.
 
-Que hace el sistema:
-- Descuenta inventario.
-- Calcula costo consumiendo lotes FIFO (si hay lotes).
-- Aparece en reportes como merma (no como venta).
+Úsalo cuando:
+- quieras confirmar si una talla está disponible
+- necesites revisar stock antes de vender
+- quieras ver si otra sucursal tiene el producto
 
-### C) Regularizacion - Para correcciones de conteo (entrada)
+Importante:
+- para `personal`, esta sección es de lectura
+- no debes registrar compras, mermas ni regularizaciones
 
-Cuando usarlo:
-- Aparecio stock que no estaba registrado.
-- Ajuste por conteo (entrada).
+## 4. Catálogo
 
-Pasos:
-1) Selecciona "Regularizacion".
-2) Elige motivo y nota.
-3) Ingresa tallas y cantidades.
-4) Si conoces el costo, ingresalo. Si no, dejalo vacio.
-5) Confirma.
+Ruta: `Catálogo`
 
-Que hace el sistema:
-- Suma inventario.
-- Crea lotes tipo "regularizacion" para mantener FIFO.
-- Si no hay costo, se marca como costo desconocido (puede salir como "Sin costo" en algunos reportes).
+Aquí puedes buscar productos y ver su información.
 
-## 4) Registrar venta (salida de stock)
+Puedes buscar por:
+- marca
+- modelo
+- nombre
+- código
 
-Ruta: Registrar venta
+Importante:
+- no creas productos
+- no editas productos
 
-Pasos:
-1) Busca el producto (la tarjeta muestra stock por talla).
-2) En la talla, usa + / - para agregar cantidades.
-3) Ajusta precio si corresponde (si la UI lo permite).
-4) Elige metodo de pago (ej: QR).
-5) Confirma venta.
+## 5. Registrar venta
 
-Que hace el sistema:
-- Descuenta inventario.
-- Consume lotes FIFO (costo real).
-- Guarda consumo por lotes para auditoria.
-- Actualiza reportes diarios.
+Ruta: `Registrar venta`
 
-Si fue un error:
-- No se borra. Se usa "Anular venta" (reverso auditable) para devolver stock y corregir reportes.
-
-## 5) Transferencias (mover stock entre sucursales)
-
-Ruta: Transferencias
-
-Regla de roles (personal):
-- La sucursal ORIGEN solo puede SOLICITAR (crear pendiente).
-- La sucursal DESTINO puede:
-  - Marcar como transferido (confirma y mueve stock).
-  - Anular (si esta pendiente).
-
-### A) Solicitar transferencia (origen)
+Esta pantalla sirve solo para vender.
 
 Pasos:
-1) Selecciona sucursal Origen y Destino.
-2) Busca productos.
-3) Agrega cantidades por talla (se ve stock origen).
-4) Guarda solicitud.
+1. Busca el producto.
+2. Agrega cantidades por talla usando `+` y `-`.
+3. Revisa el carrito.
+4. Elige método de pago.
+5. Confirma la venta.
+
+Qué hace el sistema:
+- descuenta stock de tu sucursal
+- registra la venta
+- actualiza el historial y los cálculos internos
+
+Importante:
+- si una talla no tiene stock, aquí no se solicita transferencia
+- `Registrar venta` ya no tiene flujo de solicitud
+
+Si falta una talla:
+- ve a `Transferencias`
+
+## 6. Transferencias
+
+Ruta: `Transferencias`
+
+Esta es la única sección donde se solicita stock a otra sucursal.
+
+### Cómo funciona para personal
+
+Para el rol `personal`:
+- tu sucursal es el `destino`
+- tú eliges la sucursal `origen`
+
+En palabras simples:
+- eliges de qué sucursal te van a enviar el producto
+- el producto llegará a tu sucursal
+
+### Pasos para solicitar una transferencia
+
+1. Entra a `Transferencias`.
+2. Revisa que tu sucursal aparezca como destino.
+3. Elige la sucursal origen.
+4. Busca el producto.
+5. Agrega tallas y cantidades.
+6. Guarda.
 
 Resultado:
-- Queda en estado "pendiente".
-- No mueve stock aun.
+- la solicitud queda en estado `pendiente`
+- todavía no mueve stock
 
-### B) Confirmar transferencia (destino)
+### Qué puedes revisar
 
-Pasos:
-1) En historial "Pendientes", ubica la transferencia.
-2) Pulsa "Marcar transferido".
+En la tabla puedes ver:
+- origen
+- destino
+- estado
+- fecha
+- detalle de productos y tallas
 
-Resultado:
-- Se descuenta stock en origen.
-- Se suma stock en destino.
-- El costo se calcula por FIFO en origen.
-- Queda rastro de movimientos.
+Estados comunes:
+- `pendiente`
+- `transferido`
+- `anulada`
 
-### C) Anular transferencia (destino)
+## 7. Qué hacer si algo sale mal
 
-Cuando usarlo:
-- Solicitud equivocada, duplicada, o no se puede recibir.
+### No hay stock de una talla
 
-Pasos:
-1) En historial "Pendientes", pulsa "Anular".
+Haz esto:
+- no inventes una venta
+- no intentes corregir inventario
+- solicita transferencia desde `Transferencias`
 
-Resultado:
-- Pasa a "anulada".
-- No mueve stock.
+### No puedes operar
 
-## 6) Reporte historico (consulta)
+Revisa con el admin:
+- tu rol
+- tu sucursal asignada
 
-Ruta: Reportes
+### No ves una opción que esperabas
 
-En la vista inicial:
-- Veras resumen por sucursal:
-  - Ventas (recaudado, costo, margen)
-  - Reposiciones (compras, inversion)
-  - Inventario (mermas, regularizaciones)
-  - Transferencias (entradas/salidas)
+Puede ser normal.
+Por ejemplo:
+- `Inventario` para personal es solo consulta
+- `Registrar venta` ya no solicita transferencias
 
-Para ver detalle:
-1) Pulsa "Ver" en una sucursal.
-2) Usa tabs (Ventas, Reposiciones, Inventario, Transferencias).
-3) En Ventas/Reposiciones puedes expandir filas para ver lotes consumidos o estado del lote.
+## 8. Buenas prácticas
 
-## 7) Buenas practicas (para que cuadre el sistema)
+- revisa siempre talla y cantidad antes de vender
+- usa `Transferencias` solo cuando realmente necesites stock de otra sucursal
+- no compartas tu cuenta
+- si ves stock raro, no lo corrijas tú: repórtalo al admin
+- usa la sección correcta para cada acción
 
-- Compra: siempre poner costo unitario correcto.
-- Merma: usarlo solo para perdida real.
-- Regularizacion: usarlo para entradas por conteo (y anotar motivo).
-- Si cometes un error: prefiere "Anular" antes que duplicar registros.
-- No compartas usuario/clave entre personal.
+## 9. Resumen rápido
 
-## 8) Solucion de problemas rapida
+Si eres `personal`, piensa así:
 
-- "No puedo marcar transferido":
-  - Probable causa: no eres sucursal destino o no tienes sucursal asignada.
-- "No puedo ver mi sucursal":
-  - Probable causa: falta `sucursalId` en tu usuario.
-- "Sale Sin costo":
-  - Probable causa: stock viejo sin lotes, o regularizacion con costo desconocido.
+- quiero revisar stock: `Inventario`
+- quiero buscar un producto: `Catálogo`
+- quiero vender: `Registrar venta`
+- me falta una talla y otra sucursal sí la tiene: `Transferencias`
 
+No uses:
+- `Registrar venta` para pedir transferencias
+- `Inventario` para corregir stock
+- flujos manuales para compensar errores
